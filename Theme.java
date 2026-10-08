@@ -36,15 +36,7 @@ import java.util.Set;
 final class Theme {
     private Theme() {}
 
-    // ---------------------------------------------------------------- palette
-    // The five colours from the "Dusty Rose & Lavender" palette.
-    static final Color ROSE = new Color(0xC4, 0x96, 0xA1);      // Dusty Rose      #C496A1
-    static final Color SAGE = new Color(0x91, 0x9D, 0x85);      // Muted Sage      #919D85
-    static final Color LAVENDER = new Color(0x8E, 0x88, 0xA3);  // Lavender Purple #8E88A3
-    static final Color CREAM = new Color(0xEB, 0xE1, 0xC6);     // Vintage Cream   #EBE1C6
-    static final Color BRONZE = new Color(0x81, 0x78, 0x5A);    // Antique Bronze  #81785A
-
-    // Where each colour is used. Page and card colours come from the dashboard design.
+    // ---------------------------------------------------------------- colours
     static final Color BG = new Color(0xF8, 0xF7, 0xFA);            // page background
     static final Color CARD = Color.WHITE;                           // cards, fields, top bar
     static final Color TEXT = new Color(0x1F, 0x1D, 0x2B);          // main text
@@ -64,6 +56,8 @@ final class Theme {
     static final Color TIP_CARD = new Color(0x63, 0x5B, 0x83);      // card at the bottom of the sidebar
     static final Color ON_INK_MUTED = new Color(214, 209, 228);
     static final Color LEAF = new Color(0xE8, 0xD3, 0xAE);          // cream leaves on the sidebar card
+    static final Color CREAM = new Color(0xEB, 0xE1, 0xC6);         // the logo coin
+    static final Color SAGE = new Color(0x91, 0x9D, 0x85);          // step numbers on the sign-in window
     static final Color GREEN = new Color(0x2F, 0x7D, 0x46);         // money in
     static final Color GREEN_SOFT = new Color(0xE6, 0xF4, 0xEA);
     static final Color AMBER = new Color(0xB7, 0x79, 0x1F);         // near a limit
@@ -175,11 +169,6 @@ final class Theme {
         return (value < 0 ? "-" : "") + "\u20B1" + MONEY.format(Math.abs(value));
     }
 
-    /** Always shows a sign: "+₱500.00" or "-₱120.00". */
-    static String signedMoney(double value) {
-        return (value < 0 ? "-" : "+") + "\u20B1" + MONEY.format(Math.abs(value));
-    }
-
     /** Dashboard style: whole pesos drop the ".00" ("₱850"), but centavos are kept ("₱285.71"). */
     static String peso(double value) {
         return (value < -0.004 ? "-" : "") + "\u20B1" + amountText(Math.abs(value));
@@ -220,11 +209,6 @@ final class Theme {
         label.setFont(font);
         label.setForeground(color);
         return label;
-    }
-
-    /** Small heading such as "Wallet" (sentence case reads friendlier than ALL CAPS). */
-    static JLabel label(String value) {
-        return text(value, LABEL, MUTED);
     }
 
     /** A rounded white card with a thin outline. */
@@ -306,9 +290,14 @@ final class Theme {
         field.setBackground(CARD);
         field.setCaretColor(TEXT);
         field.setBorder(new RoundBorder(BORDER, 10, new Insets(8, 12, 8, 12)));
-        field.addFocusListener(new FocusAdapter() {
-            @Override public void focusGained(FocusEvent e) { setOutline(field, ACCENT); }
-            @Override public void focusLost(FocusEvent e) { setOutline(field, BORDER); }
+        highlightOnFocus(field);
+    }
+
+    /** Draws the rounded outline in the accent colour while the component has focus. */
+    private static void highlightOnFocus(JComponent c) {
+        c.addFocusListener(new FocusAdapter() {
+            @Override public void focusGained(FocusEvent e) { setOutline(c, ACCENT); }
+            @Override public void focusLost(FocusEvent e) { setOutline(c, BORDER); }
         });
     }
 
@@ -345,10 +334,7 @@ final class Theme {
                 return this;
             }
         });
-        combo.addFocusListener(new FocusAdapter() {
-            @Override public void focusGained(FocusEvent e) { setOutline(combo, ACCENT); }
-            @Override public void focusLost(FocusEvent e) { setOutline(combo, BORDER); }
-        });
+        highlightOnFocus(combo);
         // Same height as a text field so rows line up.
         combo.setPreferredSize(new Dimension(combo.getPreferredSize().width, 38));
     }
@@ -403,7 +389,7 @@ final class Theme {
     }
 
     /** The colour actually showing behind a component (skipping transparent panels). */
-    static Color visibleBackground(Component c) {
+    private static Color visibleBackground(Component c) {
         while (c != null) {
             if (c instanceof RoundedPanel || c.isOpaque()) return c.getBackground();
             c = c.getParent();
@@ -424,14 +410,15 @@ final class Theme {
             return arrow;
         }
 
+        // The system UI paints a blue "selected" block behind the value in the closed box.
+        // These two overrides skip it so the combo looks like the text fields.
         @Override
         public void paintCurrentValueBackground(Graphics g, Rectangle bounds, boolean hasFocus) {
-            // The combo's own background is enough; no blue block behind the value.
         }
 
         @Override
         public void paintCurrentValue(Graphics g, Rectangle bounds, boolean hasFocus) {
-            super.paintCurrentValue(g, bounds, false); // no blue "selected" block in the closed box
+            super.paintCurrentValue(g, bounds, false);
         }
     }
 
@@ -453,7 +440,7 @@ final class Theme {
         }
 
         private int hintWidth() {
-            return getFontMetrics(SMALL.deriveFont(Font.BOLD)).stringWidth(hint) + 16;
+            return getFontMetrics(LABEL).stringWidth(hint) + 16;
         }
 
         @Override
@@ -471,8 +458,7 @@ final class Theme {
                 g2.drawString(placeholder, getInsets().left, (h - fm.getHeight()) / 2 + fm.getAscent());
             }
             if (hint != null) {
-                Font f = SMALL.deriveFont(Font.BOLD);
-                g2.setFont(f);
+                g2.setFont(LABEL);
                 FontMetrics fm = g2.getFontMetrics();
                 int w = hintWidth();
                 int bh = fm.getHeight() + 6;
@@ -514,7 +500,7 @@ final class Theme {
         return table;
     }
 
-    static JScrollPane tableScroll(JTable table) {
+    private static JScrollPane tableScroll(JTable table) {
         JScrollPane scroll = new JScrollPane(table);
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.getViewport().setBackground(CARD);
@@ -593,11 +579,6 @@ final class Theme {
             setOpaque(false);
         }
 
-        void setOutline(Color color) {
-            outline = color;
-            repaint();
-        }
-
         void setMaskColor(Color color) {
             mask = color;
             if (mask != null) setBorder(new EmptyBorder(1, 1, 1, 1));
@@ -654,7 +635,16 @@ final class Theme {
         }
     }
 
-    enum ButtonKind { PRIMARY, SECONDARY, SOFT, GHOST, LINK, TAB, PLAIN, CIRCLE, CURRENT }
+    enum ButtonKind {
+        PRIMARY,    // filled lavender, white text
+        SECONDARY,  // white with an outline
+        SOFT,       // cream, for the quick actions next to a primary button
+        LINK,       // text only
+        TAB,        // unselected tab on the sign-in window
+        PLAIN,      // no box until the pointer is over it (top bar)
+        CIRCLE,     // round icon button on the sidebar card
+        CURRENT     // the current page number in the pager
+    }
 
     /** A flat, rounded button that keeps its colours on every operating system. */
     static class FlatButton extends JButton {
@@ -686,7 +676,6 @@ final class Theme {
             kind = newKind;
             switch (kind) {
                 case PRIMARY:
-                case GHOST:
                 case CURRENT:
                     setForeground(Color.WHITE);
                     break;
@@ -742,11 +731,7 @@ final class Theme {
                     fill = m.isPressed() ? new Color(0xEF, 0xE6, 0xD9) : m.isRollover() ? new Color(0xF5, 0xEE, 0xE4) : SOFT_BUTTON;
                     line = SOFT_BUTTON_LINE;
                     break;
-                case GHOST: // on the dark sidebar
-                    fill = new Color(255, 255, 255, m.isRollover() ? 45 : 18);
-                    line = new Color(255, 255, 255, 70);
-                    break;
-                case PLAIN: // no box until the pointer is over it
+                case PLAIN:
                     if (m.isRollover() || m.isPressed()) fill = m.isPressed() ? new Color(0xE9, 0xE7, 0xF0) : CHIP;
                     break;
                 case CIRCLE:
@@ -773,7 +758,7 @@ final class Theme {
                 g2.setColor(line);
                 g2.drawRoundRect(0, 0, w, h, radius, radius);
             }
-            if (isFocusOwner() && kind != ButtonKind.GHOST && kind != ButtonKind.LINK && kind != ButtonKind.TAB) {
+            if (isFocusOwner() && kind != ButtonKind.LINK && kind != ButtonKind.TAB) {
                 g2.setColor(new Color(ACCENT.getRed(), ACCENT.getGreen(), ACCENT.getBlue(), 120));
                 if (kind == ButtonKind.CIRCLE) g2.drawOval(2, 2, w - 4, h - 4);
                 else g2.drawRoundRect(2, 2, w - 4, h - 4, Math.max(4, radius - 2), Math.max(4, radius - 2));
@@ -786,8 +771,8 @@ final class Theme {
                 Graphics2D g3 = (Graphics2D) g.create();
                 g3.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 if (trailing != null) {
-                    int right = getInsets().right - trailing.getIconWidth() - 8;
-                    trailing.paintIcon(this, g3, getWidth() - right - trailing.getIconWidth() - 4 - 4,
+                    // setTrailingIcon() widened the right inset to make room, so the icon starts there.
+                    trailing.paintIcon(this, g3, getWidth() - getInsets().right,
                             (getHeight() - trailing.getIconHeight()) / 2);
                 }
                 if (dot) {
@@ -880,7 +865,7 @@ final class Theme {
     static final class Pill extends JLabel {
         Pill(String text, Color background, Color foreground) {
             super(text);
-            setFont(font(Font.PLAIN, 13));
+            setFont(BODY);
             setForeground(foreground);
             setBackground(background);
             setOpaque(false);
@@ -1010,13 +995,9 @@ final class Theme {
             });
         }
 
-        /**
-         * BUG FIX: the text cursor sits at the end of the text, and Swing scrolls it into view,
-         * so any scrollable page containing WrapText opened scrolled to the bottom. This text is
-         * read-only, so it never needs to scroll itself into view.
-         */
+        // Without this, Swing scrolls the (hidden) text cursor into view, so a page with
+        // WrapText on it opens scrolled to the bottom. Read-only text never needs that.
         @Override public void scrollRectToVisible(Rectangle r) {
-            // intentionally empty
         }
 
         @Override public Dimension getPreferredSize() {
@@ -1101,7 +1082,7 @@ final class Theme {
         }
 
         @Override protected void paintTrack(Graphics g, JComponent c, Rectangle r) {
-            // transparent track
+            // No track, only the thumb.
         }
 
         @Override protected void paintThumb(Graphics g, JComponent c, Rectangle r) {
@@ -1138,4 +1119,4 @@ final class Theme {
         item.addActionListener(e -> action.run());
         return item;
     }
-}
+}
