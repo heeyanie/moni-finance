@@ -17,7 +17,7 @@ final class Icons {
         // navigation (solid)
         HOME, LIST, PIE, PIGGY, BARS, GEAR,
         // cards and buttons (outline)
-        WALLET, PIGGY_LINE, SWAP, RECEIPT, SEARCH, CALENDAR, BELL, PLUS, CASH, COINS,
+        WALLET, PIGGY_LINE, SWAP, RECEIPT, SEARCH, CALENDAR, BELL, CASH, COINS,
         CHEVRON_DOWN, CHEVRON_LEFT, CHEVRON_RIGHT, INFO, SLIDERS, LOGOUT,
         // spending categories
         UTENSILS, BUS, CAP, GAMEPAD, BAG, BOLT, HEART, TAG,
@@ -68,8 +68,7 @@ final class Icons {
         };
     }
 
-    // =====================================================================
-
+    /** One of the icons in {@link Name}, drawn at the given size and colour. */
     private static final class Glyph implements Icon {
         private final Name name;
         private final int size;
@@ -102,14 +101,14 @@ final class Icons {
                 case HOME: {
                     Area house = new Area(path(true, 12, 2.8, 21.6, 11.3, 19.4, 11.3, 19.4, 20.6,
                             4.6, 20.6, 4.6, 11.3, 2.4, 11.3));
-                    house.subtract(new Area(rr(9.9, 14.2, 4.2, 8, 1.2)));
+                    house.subtract(new Area(roundRect(9.9, 14.2, 4.2, 8, 1.2)));
                     fillSoft(g, house);
                     break;
                 }
                 case LIST:
                     for (double y : new double[]{6, 12, 18}) {
                         g.fill(circle(4.6, y, 1.4));
-                        g.draw(new Line2D.Double(9, y, 20.5, y));
+                        g.draw(line(9, y, 20.5, y));
                     }
                     break;
                 case PIE:
@@ -129,14 +128,14 @@ final class Icons {
                     g.draw(circle(12.6, 3.6, 1.9));
                     break;
                 case BARS:
-                    g.fill(rr(3.8, 13, 4.4, 8, 1.3));
-                    g.fill(rr(9.8, 8.4, 4.4, 12.6, 1.3));
-                    g.fill(rr(15.8, 3.4, 4.4, 17.6, 1.3));
+                    g.fill(roundRect(3.8, 13, 4.4, 8, 1.3));
+                    g.fill(roundRect(9.8, 8.4, 4.4, 12.6, 1.3));
+                    g.fill(roundRect(15.8, 3.4, 4.4, 17.6, 1.3));
                     break;
                 case GEAR: {
                     Area gear = new Area(circle(12, 12, 7.1));
                     for (int k = 0; k < 8; k++) {
-                        Shape tooth = rr(10.15, 1.7, 3.7, 5, 1.1);
+                        Shape tooth = roundRect(10.15, 1.7, 3.7, 5, 1.1);
                         gear.add(new Area(AffineTransform.getRotateInstance(Math.toRadians(45 * k), 12, 12)
                                 .createTransformedShape(tooth)));
                     }
@@ -146,32 +145,32 @@ final class Icons {
                 }
                 case WALLET:
                     g.draw(path(false, 17.5, 6.2, 17.5, 4.6, 16.4, 3.5, 6.5, 3.5, 4.2, 4.6, 3.5, 6.5));
-                    g.draw(rr(3.5, 6.2, 17, 14, 3.2));
-                    g.draw(rr(13.8, 10.2, 6.7, 5.6, 2));
+                    g.draw(roundRect(3.5, 6.2, 17, 14, 3.2));
+                    g.draw(roundRect(13.8, 10.2, 6.7, 5.6, 2));
                     g.fill(circle(16.8, 13, 1));
                     break;
                 case SWAP:
-                    g.draw(new Line2D.Double(4, 8, 19.5, 8));
+                    g.draw(line(4, 8, 19.5, 8));
                     g.draw(path(false, 15.5, 4, 19.5, 8, 15.5, 12));
-                    g.draw(new Line2D.Double(20, 16, 4.5, 16));
+                    g.draw(line(20, 16, 4.5, 16));
                     g.draw(path(false, 8.5, 12, 4.5, 16, 8.5, 20));
                     break;
                 case RECEIPT:
                     g.draw(path(true, 5, 3, 19, 3, 19, 21, 16.67, 19.6, 14.33, 21, 12, 19.6,
                             9.67, 21, 7.33, 19.6, 5, 21));
-                    g.draw(new Line2D.Double(8.5, 7.5, 15.5, 7.5));
-                    g.draw(new Line2D.Double(8.5, 11, 15.5, 11));
-                    g.draw(new Line2D.Double(8.5, 14.5, 12.5, 14.5));
+                    g.draw(line(8.5, 7.5, 15.5, 7.5));
+                    g.draw(line(8.5, 11, 15.5, 11));
+                    g.draw(line(8.5, 14.5, 12.5, 14.5));
                     break;
                 case SEARCH:
                     g.draw(circle(10.8, 10.8, 6.4));
-                    g.draw(new Line2D.Double(15.6, 15.6, 20.5, 20.5));
+                    g.draw(line(15.6, 15.6, 20.5, 20.5));
                     break;
                 case CALENDAR:
-                    g.draw(rr(3.5, 5, 17, 15.5, 2.8));
-                    g.draw(new Line2D.Double(3.5, 10, 20.5, 10));
-                    g.draw(new Line2D.Double(8, 3, 8, 6.8));
-                    g.draw(new Line2D.Double(16, 3, 16, 6.8));
+                    g.draw(roundRect(3.5, 5, 17, 15.5, 2.8));
+                    g.draw(line(3.5, 10, 20.5, 10));
+                    g.draw(line(8, 3, 8, 6.8));
+                    g.draw(line(16, 3, 16, 6.8));
                     for (double[] d : new double[][]{{8, 13.8}, {12, 13.8}, {16, 13.8}, {8, 17.2}, {12, 17.2}}) {
                         g.fill(circle(d[0], d[1], 1));
                     }
@@ -188,15 +187,11 @@ final class Icons {
                     bell.closePath();
                     g.draw(bell);
                     g.draw(new QuadCurve2D.Double(10, 21, 12, 22.6, 14, 21));
-                    g.draw(new Line2D.Double(12, 2.4, 12, 4.4));
+                    g.draw(line(12, 2.4, 12, 4.4));
                     break;
                 }
-                case PLUS:
-                    g.draw(new Line2D.Double(12, 5, 12, 19));
-                    g.draw(new Line2D.Double(5, 12, 19, 12));
-                    break;
                 case CASH:
-                    g.draw(rr(2.5, 6, 19, 12, 2.2));
+                    g.draw(roundRect(2.5, 6, 19, 12, 2.2));
                     g.draw(circle(12, 12, 2.8));
                     g.fill(circle(6.2, 12, 1));
                     g.fill(circle(17.8, 12, 1));
@@ -204,7 +199,7 @@ final class Icons {
                 case COINS:
                     g.draw(circle(9.2, 9.2, 5.8));
                     g.draw(new Arc2D.Double(9, 9, 11.8, 11.8, 172, 285, Arc2D.OPEN));
-                    g.draw(new Line2D.Double(9.2, 6.8, 9.2, 11.6));
+                    g.draw(line(9.2, 6.8, 9.2, 11.6));
                     break;
                 case CHEVRON_DOWN:
                     g.draw(path(false, 6, 9, 12, 15, 18, 9));
@@ -217,26 +212,26 @@ final class Icons {
                     break;
                 case INFO:
                     g.draw(circle(12, 12, 9));
-                    g.draw(new Line2D.Double(12, 11, 12, 16.5));
+                    g.draw(line(12, 11, 12, 16.5));
                     g.fill(circle(12, 7.6, 1.25));
                     break;
                 case SLIDERS:
-                    g.draw(new Line2D.Double(4, 6, 20, 6));
-                    g.draw(new Line2D.Double(4, 12, 20, 12));
-                    g.draw(new Line2D.Double(4, 18, 20, 18));
+                    g.draw(line(4, 6, 20, 6));
+                    g.draw(line(4, 12, 20, 12));
+                    g.draw(line(4, 18, 20, 18));
                     g.fill(circle(9, 6, 2.4));
                     g.fill(circle(15.5, 12, 2.4));
                     g.fill(circle(8, 18, 2.4));
                     break;
                 case LOGOUT:
                     g.draw(path(false, 10, 4, 5.5, 4, 4.5, 5, 4.5, 19, 5.5, 20, 10, 20));
-                    g.draw(new Line2D.Double(9.5, 12, 20, 12));
+                    g.draw(line(9.5, 12, 20, 12));
                     g.draw(path(false, 16, 8, 20, 12, 16, 16));
                     break;
                 case UTENSILS: {
-                    g.draw(path(false, 4.3, 3, 4.3, 8.2));
-                    g.draw(path(false, 9.3, 3, 9.3, 8.2));
-                    g.draw(new Line2D.Double(6.8, 3, 6.8, 21));
+                    g.draw(line(4.3, 3, 4.3, 8.2));
+                    g.draw(line(9.3, 3, 9.3, 8.2));
+                    g.draw(line(6.8, 3, 6.8, 21));
                     g.draw(new Arc2D.Double(4.3, 5.7, 5, 5, 180, 180, Arc2D.OPEN));
                     Path2D blade = new Path2D.Double();
                     blade.moveTo(17.2, 13.2);
@@ -245,17 +240,17 @@ final class Icons {
                     blade.closePath();
                     g.fill(blade);
                     g.draw(blade);
-                    g.draw(new Line2D.Double(17.2, 13, 17.2, 21));
+                    g.draw(line(17.2, 13, 17.2, 21));
                     break;
                 }
                 case BUS:
-                    g.draw(rr(5, 3, 14, 15.5, 3));
-                    g.draw(new Line2D.Double(5, 11, 19, 11));
-                    g.draw(new Line2D.Double(9.5, 6.4, 14.5, 6.4));
+                    g.draw(roundRect(5, 3, 14, 15.5, 3));
+                    g.draw(line(5, 11, 19, 11));
+                    g.draw(line(9.5, 6.4, 14.5, 6.4));
                     g.fill(circle(8.7, 14.6, 1.15));
                     g.fill(circle(15.3, 14.6, 1.15));
-                    g.draw(new Line2D.Double(7.8, 18.5, 7.8, 21));
-                    g.draw(new Line2D.Double(16.2, 18.5, 16.2, 21));
+                    g.draw(line(7.8, 18.5, 7.8, 21));
+                    g.draw(line(16.2, 18.5, 16.2, 21));
                     break;
                 case CAP: {
                     g.fill(path(true, 12, 3.6, 22.6, 8.9, 12, 14.2, 1.4, 8.9));
@@ -269,7 +264,7 @@ final class Icons {
                     base.closePath();
                     g.fill(base);
                     g.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                    g.draw(new Line2D.Double(21.2, 9.4, 21.2, 15.4));
+                    g.draw(line(21.2, 9.4, 21.2, 15.4));
                     g.fill(circle(21.2, 16.2, 1.2));
                     break;
                 }
@@ -285,7 +280,7 @@ final class Icons {
                     break;
                 }
                 case BAG: {
-                    g.draw(rr(4.5, 8, 15, 13, 2.5));
+                    g.draw(roundRect(4.5, 8, 15, 13, 2.5));
                     Path2D handle = new Path2D.Double();
                     handle.moveTo(8.5, 10.5);
                     handle.lineTo(8.5, 7);
@@ -318,17 +313,15 @@ final class Icons {
                 case SPROUT:
                     drawSprout(g);
                     break;
-                default:
-                    break;
             }
         }
 
         /** Piggy bank body, snout, legs and ear as one outline. */
         private static Area piggy() {
             Area pig = new Area(new Ellipse2D.Double(3.2, 7.6, 16.4, 11.4));
-            pig.add(new Area(rr(17.4, 11, 4.1, 4.6, 1.4)));
-            pig.add(new Area(rr(6, 16, 3.3, 5, 1.2)));
-            pig.add(new Area(rr(13.3, 16, 3.3, 5, 1.2)));
+            pig.add(new Area(roundRect(17.4, 11, 4.1, 4.6, 1.4)));
+            pig.add(new Area(roundRect(6, 16, 3.3, 5, 1.2)));
+            pig.add(new Area(roundRect(13.3, 16, 3.3, 5, 1.2)));
             pig.add(new Area(path(true, 7.1, 9.7, 8.5, 5.2, 11.9, 8.4)));
             return pig;
         }
@@ -366,10 +359,16 @@ final class Icons {
             return new Ellipse2D.Double(cx - r, cy - r, r * 2, r * 2);
         }
 
-        private static Shape rr(double x, double y, double w, double h, double r) {
+        private static Shape line(double x1, double y1, double x2, double y2) {
+            return new Line2D.Double(x1, y1, x2, y2);
+        }
+
+        /** r is the corner radius (RoundRectangle2D itself expects the diameter). */
+        private static Shape roundRect(double x, double y, double w, double h, double r) {
             return new RoundRectangle2D.Double(x, y, w, h, r * 2, r * 2);
         }
 
+        /** Straight lines through the points x1, y1, x2, y2, ... */
         private static Path2D path(boolean closed, double... xy) {
             Path2D p = new Path2D.Double();
             p.moveTo(xy[0], xy[1]);
@@ -378,4 +377,4 @@ final class Icons {
             return p;
         }
     }
-}
+}
