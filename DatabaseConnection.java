@@ -33,6 +33,7 @@ public final class DatabaseConnection {
             try {
                 createTables(connection);
                 addMissingColumns(connection);
+                hashPlainPasswords(connection);
                 schemaReady = true;
             } catch (SQLException e) {
                 connection.close();
@@ -110,6 +111,18 @@ public final class DatabaseConnection {
         addColumnIfMissing(connection, "user_settings", "allowance_amount", "DECIMAL(12,2) NOT NULL DEFAULT 0.00");
         addColumnIfMissing(connection, "user_settings", "allowance_frequency", "VARCHAR(30) NOT NULL DEFAULT 'Daily'");
         addColumnIfMissing(connection, "user_settings", "daily_allowance", "DECIMAL(12,2) NOT NULL DEFAULT 0.00");
+    }
+
+    /**
+     * Early test accounts (like the ones in moni_db.sql) were saved with the password as typed.
+     * Login only accepts hashes now, so convert any password that isn't already a 64-character
+     * SHA-256 hex string. SHA2() gives the same result as AuthManager.hashPassword().
+     */
+    private static void hashPlainPasswords(Connection connection) throws SQLException {
+        try (Statement s = connection.createStatement()) {
+            s.executeUpdate("UPDATE users SET password = SHA2(password, 256) "
+                    + "WHERE password NOT REGEXP '^[0-9a-f]{64}$'");
+        }
     }
 
     private static void addColumnIfMissing(Connection connection, String table, String column, String definition)
