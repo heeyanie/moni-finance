@@ -27,10 +27,6 @@ import java.util.Objects;
  */
 final class TransactionsPanel extends Theme.RoundedPanel {
 
-    // Values stored in the database.
-    static final String MONEY_IN = "Money In";
-    static final String MONEY_OUT = "Money Out";
-
     // Filter choices.
     static final String ALL_CATEGORIES = "All categories";
     static final String ALL_TYPES = "All types";
@@ -48,7 +44,7 @@ final class TransactionsPanel extends Theme.RoundedPanel {
     private final JTable table = createTable(model);
     private final Theme.SearchField search = new Theme.SearchField("Search transactions...", null);
     private final JComboBox<String> categoryFilter = new JComboBox<>();
-    private final JComboBox<String> typeFilter = new JComboBox<>(new String[]{ALL_TYPES, MONEY_IN, MONEY_OUT});
+    private final JComboBox<String> typeFilter = new JComboBox<>(new String[]{ALL_TYPES, TransactionRecord.MONEY_IN, TransactionRecord.MONEY_OUT});
     private final JComboBox<String> periodFilter =
             new JComboBox<>(new String[]{ALL_TIME, TODAY, THIS_WEEK, THIS_MONTH});
     private final JPanel filters = new JPanel(new GridBagLayout());
@@ -212,12 +208,11 @@ final class TransactionsPanel extends Theme.RoundedPanel {
 
         filtered = new ArrayList<>();
         for (TransactionRecord r : all) {
-            LocalDate date = LocalDate.parse(r.getDate());
-            String description = Objects.toString(r.getDescription(), "");
+            LocalDate date = r.getDate();
             if (start != null && (date.isBefore(start) || date.isAfter(today))) continue;
             if (!ALL_CATEGORIES.equals(category) && !category.equals(r.getCategorySource())) continue;
             if (!ALL_TYPES.equals(type) && !type.equals(r.getFlowType())) continue;
-            if (!text.isEmpty() && !(r.getCategorySource() + " " + description).toLowerCase().contains(text)) continue;
+            if (!text.isEmpty() && !(r.getCategorySource() + " " + r.getDescription()).toLowerCase().contains(text)) continue;
             filtered.add(r);
         }
         if (sortColumn >= 0) {
@@ -231,10 +226,7 @@ final class TransactionsPanel extends Theme.RoundedPanel {
         int to = Math.min(filtered.size(), from + pageSize);
 
         model.setRowCount(0);
-        for (TransactionRecord r : filtered.subList(from, to)) {
-            model.addRow(new Object[]{LocalDate.parse(r.getDate()), r.getFlowType(), r.getCategorySource(),
-                    Objects.toString(r.getDescription(), ""), r.getAmount()});
-        }
+        for (TransactionRecord r : filtered.subList(from, to)) addRow(model, r);
 
         showing.setText(filtered.isEmpty() ? " "
                 : "Showing " + (from + 1) + " to " + to + " of " + filtered.size()
@@ -268,7 +260,7 @@ final class TransactionsPanel extends Theme.RoundedPanel {
             case 0: return Comparator.comparing(TransactionRecord::getDate);
             case 1: return Comparator.comparing(r -> Objects.toString(r.getFlowType(), ""));
             case 2: return Comparator.comparing(r -> Objects.toString(r.getCategorySource(), "").toLowerCase());
-            case 3: return Comparator.comparing(r -> Objects.toString(r.getDescription(), "").toLowerCase());
+            case 3: return Comparator.comparing(r -> r.getDescription().toLowerCase());
             default: return Comparator.comparingDouble(TransactionRecord::getAmount);
         }
     }
@@ -338,6 +330,10 @@ final class TransactionsPanel extends Theme.RoundedPanel {
     // =====================================================================
     // Table (also used by the weekly summary window)
     // =====================================================================
+
+    static void addRow(DefaultTableModel model, TransactionRecord r) {
+        model.addRow(new Object[]{r.getDate(), r.getFlowType(), r.getCategorySource(), r.getDescription(), r.getAmount()});
+    }
 
     static DefaultTableModel newModel() {
         return new DefaultTableModel(new String[]{"Date", "Type", "Category", "Description", "Amount"}, 0) {
@@ -410,8 +406,8 @@ final class TransactionsPanel extends Theme.RoundedPanel {
                                                        boolean focused, int row, int column) {
             String text = String.valueOf(value);
             if (typeColumn) {
-                boolean in = MONEY_IN.equals(value);
-                pill.set(in ? "In" : MONEY_OUT.equals(value) ? "Out" : text,
+                boolean in = TransactionRecord.MONEY_IN.equals(value);
+                pill.set(in ? "In" : TransactionRecord.MONEY_OUT.equals(value) ? "Out" : text,
                         in ? Theme.GREEN_SOFT : Theme.RED_SOFT, in ? Theme.GREEN : Theme.RED);
             } else {
                 Theme.Tint tint = Theme.tintFor(text);
@@ -421,4 +417,4 @@ final class TransactionsPanel extends Theme.RoundedPanel {
             return this;
         }
     }
-}
+}

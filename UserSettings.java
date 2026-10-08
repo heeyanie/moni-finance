@@ -4,10 +4,10 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+/** The user's budget plan and dashboard choices, stored in the user_settings and budgets tables. */
 public class UserSettings {
     private double allowanceAmount;
     private String allowanceFrequency = "Daily";
-    private double dailyAllowance;
     private double dailyLimit;
     private double weeklyLimit;
 
@@ -22,17 +22,16 @@ public class UserSettings {
 
     private final Map<String, Double> categoryLimits = new LinkedHashMap<>();
 
-    public double getAllowanceAmount() { 
-        return allowanceAmount; 
+    public double getAllowanceAmount() {
+        return allowanceAmount;
     }
 
-    public void setAllowanceAmount(double value) { 
-        this.allowanceAmount = Math.max(0, value); 
-        recalculateDailyAllowance();
+    public void setAllowanceAmount(double value) {
+        this.allowanceAmount = Math.max(0, value);
     }
 
-    public String getAllowanceFrequency() { 
-        return allowanceFrequency; 
+    public String getAllowanceFrequency() {
+        return allowanceFrequency;
     }
 
     public void setAllowanceFrequency(String value) {
@@ -41,31 +40,27 @@ public class UserSettings {
         } else {
             this.allowanceFrequency = value.trim();
         }
-        recalculateDailyAllowance();
     }
 
-    public double getDailyAllowance() { 
-        return dailyAllowance; 
+    /** The allowance worked out per day, rounded to whole pesos. */
+    public double getDailyAllowance() {
+        return perDay(allowanceAmount, allowanceFrequency);
     }
 
-    public void setDailyAllowance(double value) { 
-        this.dailyAllowance = Math.max(0, value); 
+    public double getDailyLimit() {
+        return dailyLimit;
     }
 
-    public double getDailyLimit() { 
-        return dailyLimit; 
+    public void setDailyLimit(double value) {
+        this.dailyLimit = Math.max(0, value);
     }
 
-    public void setDailyLimit(double value) { 
-        this.dailyLimit = Math.max(0, value); 
+    public double getWeeklyLimit() {
+        return weeklyLimit;
     }
 
-    public double getWeeklyLimit() { 
-        return weeklyLimit; 
-    }
-
-    public void setWeeklyLimit(double value) { 
-        this.weeklyLimit = Math.max(0, value); 
+    public void setWeeklyLimit(double value) {
+        this.weeklyLimit = Math.max(0, value);
     }
 
     public boolean isShowWallet() { return showWallet; }
@@ -92,8 +87,8 @@ public class UserSettings {
     public boolean isSetupCompleted() { return setupCompleted; }
     public void setSetupCompleted(boolean value) { this.setupCompleted = value; }
 
-    public Map<String, Double> getCategoryLimits() { 
-        return Collections.unmodifiableMap(categoryLimits); 
+    public Map<String, Double> getCategoryLimits() {
+        return Collections.unmodifiableMap(categoryLimits);
     }
 
     public void setCategoryLimit(String category, double limit) {
@@ -113,21 +108,10 @@ public class UserSettings {
         return categoryLimits.getOrDefault(category.trim(), 0.0);
     }
 
-    /**
-     * Calculates clean integer daily allowance recommendations.
-     */
-    private void recalculateDailyAllowance() {
-        switch (allowanceFrequency.toLowerCase()) {
-            case "weekly":
-                this.dailyAllowance = Math.round(allowanceAmount / 7.0);
-                break;
-            case "monthly":
-                this.dailyAllowance = Math.round(allowanceAmount / 30.0);
-                break;
-            case "daily":
-            default:
-                this.dailyAllowance = Math.round(allowanceAmount);
-                break;
-        }
+    /** Turns an allowance into a daily amount: weekly is split over 7 days, monthly over 30. */
+    public static double perDay(double amount, String frequency) {
+        if ("Weekly".equalsIgnoreCase(frequency)) return Math.round(amount / 7.0);
+        if ("Monthly".equalsIgnoreCase(frequency)) return Math.round(amount / 30.0);
+        return Math.round(amount);
     }
 }

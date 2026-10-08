@@ -11,43 +11,37 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * Main Moni window: a sidebar with the pages, a top bar (search, date, notifications, account)
- * and the page itself. The dashboard shows today's spending plan, balances, recent transactions
+ * and the current page. The dashboard shows today's spending plan, balances, recent transactions
  * and weekly category budgets.
  */
 public class MainApp extends JFrame {
 
-    private static final int RECENT_LIMIT = 300;
+    private static final int RECENT_TRANSACTION_LIMIT = 300;
+    // Spending at 80% of a limit or more counts as "close to the limit".
+    private static final double NEAR_LIMIT = 0.8;
+
     private static final DateTimeFormatter LONG_DATE = DateTimeFormatter.ofPattern("MMM d, yyyy");
     private static final DateTimeFormatter RANGE_DATE = DateTimeFormatter.ofPattern("EEE, MMM d");
-    private static final String[] DAY_NAMES = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
 
-    // Presentation/demo date. This can be changed from the date button in the top bar.
-    private static final LocalDate DEFAULT_DEMO_DATE = LocalDate.of(2026, 9, 24);
-    private static LocalDate presentationDate = DEFAULT_DEMO_DATE;
+    private static final String MONEY_IN = TransactionRecord.MONEY_IN;
+    private static final String MONEY_OUT = TransactionRecord.MONEY_OUT;
+    private static final String SAVINGS = TransactionRecord.SAVINGS;
+    private static final String ALLOWANCE = TransactionRecord.ALLOWANCE;
+    private static final String OTHER_FUNDS = TransactionRecord.OTHER_FUNDS;
 
-    private static LocalDate appToday() {
-        return presentationDate;
-    }
-
-    // Values stored in the database.
-    private static final String MONEY_IN = TransactionsPanel.MONEY_IN;
-    private static final String MONEY_OUT = TransactionsPanel.MONEY_OUT;
-    private static final String SAVINGS = "Savings";
-    private static final String ALLOWANCE = "Allowance";
-    private static final String OTHER_FUNDS = "Other Funds";
-
-    // The three steps that explain what Moni is for (welcome guide + How it works).
+    // Shown on the welcome card and in the "How Moni works" guide.
     private static final String[][] HOW_IT_WORKS = {
             {"Add your allowance",
              "Whenever you receive your allowance, use Add money so Moni knows what you have."},
@@ -58,7 +52,6 @@ public class MainApp extends JFrame {
                      + "how much you can still spend today."}
     };
 
-    /** The pages in the sidebar. */
     private enum Page {
         DASHBOARD("Dashboard", Icons.Name.HOME),
         TRANSACTIONS("Transactions", Icons.Name.LIST),
@@ -76,10 +69,25 @@ public class MainApp extends JFrame {
         }
     }
 
+    /** One message in the notifications pop-up. */
+    private static final class Alert {
+        final Color color;
+        final String message;
+
+        Alert(Color color, String message) {
+            this.color = color;
+            this.message = message;
+        }
+    }
+
     private final User currentUser;
     private UserSettings settings;
 
-    // Loaded from the database by refreshDashboard(). Filtering and totals work on these copies.
+    // The day Moni treats as "today". The user can change it from the date button in the top bar
+    // to look at (or add transactions on) another day.
+    private LocalDate selectedDate = LocalDate.now();
+
+    // Loaded from the database by reloadData(). The totals below are worked out from these.
     private double walletBalance;
     private double savingsBalance;
     private double monthSpent;
@@ -89,8 +97,8 @@ public class MainApp extends JFrame {
     private Page currentPage = Page.DASHBOARD;
     private boolean showMonth; // the dashboard's "This Week" / "This Month" choice
 
-    // Built again by rebuild(). Every widget that shows data registers a refresher that
-    // redraws it from the fields above, so refreshDashboard() just runs them all.
+    // Filled again every time rebuild() runs. Each widget that shows data adds a refresher
+    // that redraws it from the fields above, so reloadData() can just run them all.
     private final Map<Page, NavItem> navItems = new EnumMap<>(Page.class);
     private final List<Runnable> refreshers = new ArrayList<>();
     private final List<TransactionsPanel> transactionPanels = new ArrayList<>();
@@ -98,10 +106,9 @@ public class MainApp extends JFrame {
     private JPanel pageHolder;
     private TransactionsPanel transactionsPage;
     private Theme.SearchField topSearch;
-    private Theme.FlatButton bell;
 
     public MainApp(User user, UserSettings settings) {
-        super("Moni \u2014 Student Money Manager");
+        super("Moni — Student Money Manager");
         currentUser = user;
         this.settings = settings;
 
@@ -115,50 +122,13 @@ public class MainApp extends JFrame {
         rebuild();
     }
 
-    // =====================================================================
-    // Startup
-    // =====================================================================
-
-    /**
-     * Loads the user's settings, running the setup wizard only if setup was never finished.
-     *
-     * @return the settings to open the dashboard with, or null to go back to the sign-in screen
-     */
-    private static UserSettings loadOrRunSetup(User user) {
-        UserSettings loaded;
-        try {
-            loaded = MoniDatabase.loadSettings(user);
-        } catch (Exception e) {
-            showError(null, "Moni couldn't load your settings from the database.", e);
-            return null;
-        }
-        if (loaded.isSetupCompleted()) return loaded;
-
-        OnboardingDialog setup = new OnboardingDialog(null, user);
-        setup.setVisible(true);
-        UserSettings chosen = setup.getResult();
-
-        if (chosen == null) {
-            JOptionPane.showMessageDialog(null,
-                    "Finish the four setup steps to open your dashboard.\n"
-                            + "You can change everything later in Budget Plan.",
-                    "Setup not finished", JOptionPane.INFORMATION_MESSAGE);
-            return null;
-        }
-
-        try {
-            MoniDatabase.saveSettings(user, chosen);
-            // Double-check the save, so this problem can never be silent again.
-            if (!MoniDatabase.isSetupCompleted(user)) {
-                throw new IllegalStateException("The setup was not stored in user_settings.");
-            }
-        } catch (Exception e) {
-            showError(null, "Your setup could not be saved, so Moni will ask for it again "
-                    + "next time you sign in.", e);
-            // Still open the dashboard so the database problem can be investigated.
-        }
-        return chosen;
+    private LocalDate today() {
+        return selectedDate;
     }
+
+    // =====================================================================
+    // Window setup
+    // =====================================================================
 
     /** Builds the whole window from the current settings, then loads data into it. */
     private void rebuild() {
@@ -188,10 +158,10 @@ public class MainApp extends JFrame {
         installShortcuts(root);
 
         showPage(currentPage);
-        refreshDashboard();
+        reloadData();
         revalidate();
         repaint();
-        navItems.get(currentPage).requestFocusInWindow(); // keyboard focus starts on the page's own tab
+        navItems.get(currentPage).requestFocusInWindow();
     }
 
     private void showPage(Page page) {
@@ -244,16 +214,11 @@ public class MainApp extends JFrame {
         side.setPreferredSize(new Dimension(248, 0));
         side.setBorder(new EmptyBorder(24, 16, 18, 16));
 
-        JPanel top = new JPanel();
-        top.setOpaque(false);
-        top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
+        JPanel top = verticalPanel();
 
-        JPanel words = new JPanel();
-        words.setOpaque(false);
-        words.setLayout(new BoxLayout(words, BoxLayout.Y_AXIS));
-        Theme.stack(words, 0, Theme.text("MONI", Theme.font(Font.BOLD, 30), Color.WHITE));
-        Theme.stack(words, 0, Theme.text("Student Money Manager", Theme.font(Font.PLAIN, 12),
-                new Color(255, 255, 255, 230)));
+        JPanel words = verticalPanel();
+        Theme.stack(words, 0, Theme.text("MONI", Theme.font(Font.BOLD, 30), Theme.ON_INK));
+        Theme.stack(words, 0, Theme.text("Student Money Manager", Theme.font(Font.PLAIN, 12), Theme.ON_INK_MUTED));
         JPanel brand = Theme.row(12, Theme.logo(50), words);
         brand.setBorder(new EmptyBorder(0, 6, 0, 0));
         fixHeight(brand);
@@ -284,20 +249,17 @@ public class MainApp extends JFrame {
         card.setBorder(new EmptyBorder(24, 38, 14, 14));
         card.setPreferredSize(new Dimension(0, 150));
 
-        JPanel words = new JPanel();
-        words.setOpaque(false);
-        words.setLayout(new BoxLayout(words, BoxLayout.Y_AXIS));
-        Theme.stack(words, 0, Theme.text("Make your", Theme.font(Font.BOLD, 15), Color.WHITE));
-        Theme.stack(words, 2, Theme.text("allowance last", Theme.font(Font.BOLD, 15), Color.WHITE));
+        JPanel words = verticalPanel();
+        Theme.stack(words, 0, Theme.text("Make your", Theme.font(Font.BOLD, 15), Theme.ON_INK));
+        Theme.stack(words, 2, Theme.text("allowance last", Theme.font(Font.BOLD, 15), Theme.ON_INK));
 
-        Theme.FlatButton go = new Theme.FlatButton(null, Icons.of(Icons.Name.CHEVRON_RIGHT, 18, Theme.INK),
+        Theme.FlatButton go = new Theme.FlatButton(null, Icons.of(Icons.Name.CHEVRON_RIGHT, 18, Theme.OLIVE),
                 Theme.ButtonKind.CIRCLE);
         go.setBorder(new EmptyBorder(0, 0, 0, 0));
         go.setPreferredSize(new Dimension(40, 40));
         go.setToolTipText("How Moni works");
         go.addActionListener(e -> showHowItWorks());
-        JPanel south = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-        south.setOpaque(false);
+        JPanel south = transparentPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         south.add(go);
 
         card.add(words, BorderLayout.NORTH);
@@ -305,14 +267,14 @@ public class MainApp extends JFrame {
         return card;
     }
 
-    /** One sidebar item. The current page gets a lighter lavender pill. */
+    /** One sidebar item. The current page gets a lighter olive pill. */
     private final class NavItem extends JButton {
         private boolean active;
 
         NavItem(Page page) {
-            super(page.title, Icons.of(page.icon, 22, Color.WHITE));
+            super(page.title, Icons.of(page.icon, 22, Theme.ON_INK));
             setFont(Theme.NAV);
-            setForeground(Color.WHITE);
+            setForeground(Theme.ON_INK);
             setHorizontalAlignment(SwingConstants.LEFT);
             setIconTextGap(18);
             setBorder(new EmptyBorder(11, 18, 11, 12));
@@ -339,11 +301,11 @@ public class MainApp extends JFrame {
                 g2.setColor(Theme.NAV_SELECTED);
                 g2.fillRoundRect(0, 0, getWidth(), getHeight(), 14, 14);
             } else if (getModel().isRollover()) {
-                g2.setColor(new Color(255, 255, 255, 24));
+                g2.setColor(Theme.withAlpha(Theme.ON_INK, 24));
                 g2.fillRoundRect(0, 0, getWidth(), getHeight(), 14, 14);
             }
             if (isFocusOwner() && !active) {
-                g2.setColor(new Color(255, 255, 255, 150));
+                g2.setColor(Theme.withAlpha(Theme.ON_INK, 150));
                 g2.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 12, 12);
             }
             g2.dispose();
@@ -373,15 +335,23 @@ public class MainApp extends JFrame {
         topSearch.setToolTipText("Search all your transactions (Ctrl + K)");
         topSearch.getDocument().addDocumentListener(Theme.onChange(this::searchEverywhere));
 
-        Theme.FlatButton date = new Theme.FlatButton(appToday().format(LONG_DATE),
+        Theme.FlatButton date = new Theme.FlatButton(today().format(LONG_DATE),
                 Icons.of(Icons.Name.CALENDAR, 22, Theme.TEXT), Theme.ButtonKind.PLAIN);
         date.setFont(Theme.font(Font.BOLD, 14));
         date.setIconTextGap(12);
         date.setTrailingIcon(Icons.of(Icons.Name.CHEVRON_DOWN, 16, Theme.TEXT));
-        date.setToolTipText("Choose the date Moni treats as today (for presentations)");
-        date.addActionListener(e -> changePresentationDate());
+        date.setToolTipText("Choose which day Moni treats as today");
+        date.addActionListener(e -> changeDate());
 
-        bell = new Theme.FlatButton(null, Icons.of(Icons.Name.BELL, 24, Theme.TEXT), Theme.ButtonKind.PLAIN);
+        Theme.FlatButton mode = new Theme.FlatButton(null,
+                Icons.of(Theme.isDarkMode() ? Icons.Name.SUN : Icons.Name.MOON, 22, Theme.TEXT), Theme.ButtonKind.PLAIN);
+        mode.setBorder(new EmptyBorder(0, 0, 0, 0));
+        mode.setPreferredSize(new Dimension(44, 44));
+        mode.setToolTipText(Theme.isDarkMode() ? "Switch to light mode" : "Switch to dark mode");
+        mode.addActionListener(e -> toggleDarkMode());
+
+        Theme.FlatButton bell = new Theme.FlatButton(null, Icons.of(Icons.Name.BELL, 24, Theme.TEXT),
+                Theme.ButtonKind.PLAIN);
         bell.setBorder(new EmptyBorder(0, 0, 0, 0));
         bell.setPreferredSize(new Dimension(44, 44));
         bell.setToolTipText("Notifications");
@@ -400,8 +370,11 @@ public class MainApp extends JFrame {
         bar.add(date, c);
         c.gridx = 2;
         c.insets = new Insets(0, 14, 0, 0);
-        bar.add(bell, c);
+        bar.add(mode, c);
         c.gridx = 3;
+        c.insets = new Insets(0, 4, 0, 0);
+        bar.add(bell, c);
+        c.gridx = 4;
         c.insets = new Insets(0, 20, 0, 0);
         bar.add(buildUserChip(), c);
         return bar;
@@ -411,11 +384,9 @@ public class MainApp extends JFrame {
         Theme.RoundedPanel chip = new Theme.RoundedPanel(new BorderLayout(12, 0), 18, Theme.CHIP, null);
         chip.setBorder(new EmptyBorder(7, 8, 7, 14));
         chip.add(new JLabel(Icons.avatar(initial(currentUser.getFullName()), 40,
-                new Color(0x6A, 0x63, 0x8A), Color.WHITE)), BorderLayout.WEST);
+                Theme.ACCENT, Theme.ON_ACCENT)), BorderLayout.WEST);
 
-        JPanel words = new JPanel();
-        words.setOpaque(false);
-        words.setLayout(new BoxLayout(words, BoxLayout.Y_AXIS));
+        JPanel words = verticalPanel();
         words.add(Box.createVerticalGlue());
         Theme.stack(words, 0, Theme.text("Hi, " + firstName(currentUser.getFullName()),
                 Theme.font(Font.BOLD, 14), Theme.TEXT));
@@ -427,7 +398,7 @@ public class MainApp extends JFrame {
         chip.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         chip.setToolTipText("Your account");
         chip.addMouseListener(new MouseAdapter() {
-            @Override public void mouseEntered(MouseEvent e) { chip.setBackground(new Color(0xEC, 0xEB, 0xF2)); }
+            @Override public void mouseEntered(MouseEvent e) { chip.setBackground(Theme.CHIP_HOVER); }
             @Override public void mouseExited(MouseEvent e) { chip.setBackground(Theme.CHIP); }
             @Override public void mousePressed(MouseEvent e) { showUserMenu(chip); }
         });
@@ -446,33 +417,29 @@ public class MainApp extends JFrame {
         JPopupMenu menu = Theme.menu();
         menu.add(Theme.menuItem("How Moni works", Icons.Name.INFO, this::showHowItWorks));
         menu.add(Theme.menuItem("Edit plan", Icons.Name.SLIDERS, this::customizeDashboard));
-        menu.add(Theme.menuItem("Change presentation date", Icons.Name.CALENDAR, this::changePresentationDate));
+        menu.add(Theme.menuItem("Change date", Icons.Name.CALENDAR, this::changeDate));
         menu.addSeparator();
         menu.add(Theme.menuItem("Log out", Icons.Name.LOGOUT, this::logout));
         menu.show(anchor, anchor.getWidth() - menu.getPreferredSize().width, anchor.getHeight() + 6);
     }
 
     private void showNotifications(JComponent anchor) {
-        JPanel list = new JPanel();
-        list.setOpaque(false);
-        list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+        JPanel list = verticalPanel();
         list.setBorder(new EmptyBorder(8, 16, 10, 16));
         Theme.stack(list, 0, Theme.text("Notifications", Theme.font(Font.BOLD, 15), Theme.TEXT));
 
-        List<String[]> alerts = alerts();
+        List<Alert> alerts = alerts();
         if (alerts.isEmpty()) {
             Theme.stack(list, 10, htmlText("You're all caught up. Moni will let you know here when "
                     + "you get close to a limit.", Theme.MUTED));
         }
-        for (String[] a : alerts) {
-            Color dot = "red".equals(a[0]) ? Theme.RED : "amber".equals(a[0]) ? Theme.AMBER : Theme.ACCENT;
-            JLabel mark = new JLabel(new DotIcon(dot));
+        for (Alert alert : alerts) {
+            JLabel mark = new JLabel(new DotIcon(alert.color));
             mark.setVerticalAlignment(SwingConstants.TOP);
             mark.setBorder(new EmptyBorder(5, 0, 0, 0));
-            JPanel row = new JPanel(new BorderLayout(10, 0));
-            row.setOpaque(false);
+            JPanel row = transparentPanel(new BorderLayout(10, 0));
             row.add(mark, BorderLayout.WEST);
-            row.add(htmlText(a[1], Theme.TEXT), BorderLayout.CENTER);
+            row.add(htmlText(alert.message, Theme.TEXT), BorderLayout.CENTER);
             Theme.stack(list, 12, row);
         }
 
@@ -507,7 +474,7 @@ public class MainApp extends JFrame {
     }
 
     // =====================================================================
-    // Page layout helpers
+    // Shared page pieces
     // =====================================================================
 
     /** Title and subtitle at the top of a page, an optional control on the right, then the body. */
@@ -515,61 +482,57 @@ public class MainApp extends JFrame {
         Theme.Page page = new Theme.Page(new BorderLayout(0, 18));
         page.setBorder(new EmptyBorder(20, 28, 20, 28));
 
-        JPanel titles = new JPanel();
-        titles.setOpaque(false);
-        titles.setLayout(new BoxLayout(titles, BoxLayout.Y_AXIS));
+        JPanel titles = verticalPanel();
         Theme.stack(titles, 0, Theme.text(title, Theme.TITLE, Theme.TEXT));
         Theme.stack(titles, 0, Theme.text(subtitle, Theme.font(Font.PLAIN, 16), Theme.MUTED));
 
-        JPanel head = new JPanel(new BorderLayout(16, 0));
-        head.setOpaque(false);
+        JPanel head = transparentPanel(new BorderLayout(16, 0));
         head.add(titles, BorderLayout.CENTER);
-        if (right != null) {
-            JPanel holder = new JPanel(new GridBagLayout());
-            holder.setOpaque(false);
-            holder.add(right);
-            head.add(holder, BorderLayout.EAST);
-        }
+        if (right != null) head.add(centred(right), BorderLayout.EAST);
 
         page.add(head, BorderLayout.NORTH);
         page.add(body, BorderLayout.CENTER);
         return page;
     }
 
-    private static JPanel clear(LayoutManager layout) {
-        JPanel p = new JPanel(layout);
-        p.setOpaque(false);
-        return p;
+    /** A tinted card: icon square, title and big number, then optional bar and caption underneath. */
+    private static Theme.RoundedPanel statCard(Theme.Tint tint, Icons.Name icon, JLabel title, JLabel value,
+                                               JComponent... below) {
+        Theme.RoundedPanel card = new Theme.RoundedPanel(new BorderLayout(0, 10), 18, tint.fill, tint.outline);
+        card.setBorder(new EmptyBorder(16, 18, 14, 18));
+
+        JPanel words = verticalPanel();
+        Theme.stack(words, 1, title);
+        Theme.stack(words, 0, value);
+
+        JPanel head = transparentPanel(new BorderLayout(16, 0));
+        head.add(alignTop(new Theme.IconBox(Icons.of(icon, 26, tint.ink), 54, tint.box, 14)), BorderLayout.WEST);
+        head.add(words, BorderLayout.CENTER);
+
+        JPanel foot = verticalPanel();
+        for (int i = 0; i < below.length; i++) Theme.stack(foot, i == 0 ? 0 : 8, below[i]);
+
+        card.add(head, BorderLayout.NORTH);
+        card.add(foot, BorderLayout.CENTER);
+        return card;
     }
 
-    /** Wraps a component so its preferred width is fixed; GridBag then splits the rest by weight. */
-    private static JPanel withWidth(JComponent c, int width) {
-        JPanel p = new JPanel(new BorderLayout()) {
-            @Override public Dimension getPreferredSize() {
-                return new Dimension(width, super.getPreferredSize().height);
-            }
-
-            @Override public Dimension getMinimumSize() {
-                return new Dimension(width * 2 / 3, super.getMinimumSize().height);
-            }
-        };
-        p.setOpaque(false);
-        p.add(c);
-        return p;
+    private static JLabel statTitle(String text) {
+        return new Theme.FitLabel(text, Theme.font(Font.BOLD, 14), Theme.TEXT);
     }
 
-    /** Keeps an icon box at the top of its cell instead of stretching it. */
-    private static JPanel top(JComponent c) {
-        JPanel p = clear(new BorderLayout());
-        p.add(c, BorderLayout.NORTH);
-        return p;
+    private static Theme.FitLabel statValue() {
+        return new Theme.FitLabel(Theme.peso(0), Theme.STAT, Theme.TEXT);
     }
 
-    /** Vertically centres a component in its cell. */
-    private static JPanel centred(JComponent c) {
-        JPanel p = clear(new GridBagLayout());
-        p.add(c);
-        return p;
+    private static Theme.FitLabel fixedValue(String text) {
+        Theme.FitLabel label = statValue();
+        label.setText(text);
+        return label;
+    }
+
+    private static Theme.WrapText caption(String text) {
+        return new Theme.WrapText(text, Theme.font(Font.PLAIN, 14), Theme.TEXT_SOFT);
     }
 
     private static JLabel cardTitle(String text, Icons.Name icon) {
@@ -579,10 +542,14 @@ public class MainApp extends JFrame {
         return title;
     }
 
-    private static Theme.RoundedPanel whiteCard(LayoutManager layout) {
-        Theme.RoundedPanel card = new Theme.RoundedPanel(layout, 18, Theme.CARD, Theme.CARD_OUTLINE);
-        card.setBorder(new EmptyBorder(18, 20, 18, 20));
-        return card;
+    /** Card title with a smaller line of text underneath, lined up with the title text. */
+    private static JPanel cardTitle(String text, Icons.Name icon, String note, Color noteColor) {
+        JLabel noteLabel = Theme.text(note, Theme.font(Font.PLAIN, 13), noteColor);
+        noteLabel.setBorder(new EmptyBorder(0, 38, 0, 0));
+        JPanel head = verticalPanel();
+        Theme.stack(head, 0, cardTitle(text, icon));
+        Theme.stack(head, 2, noteLabel);
+        return head;
     }
 
     // =====================================================================
@@ -590,9 +557,9 @@ public class MainApp extends JFrame {
     // =====================================================================
 
     private JComponent buildDashboardPage() {
-        JPanel body = clear(new BorderLayout(0, 18));
+        JPanel body = transparentPanel(new BorderLayout(0, 18));
 
-        JPanel stats = clear(new GridLayout(1, 0, 16, 0));
+        JPanel stats = transparentPanel(new GridLayout(1, 0, 16, 0));
         if (settings.isShowWallet()) stats.add(walletCard());
         if (settings.isShowSavings()) stats.add(savingsCard());
         if (settings.isShowWeekly()) stats.add(spentCard());
@@ -600,21 +567,23 @@ public class MainApp extends JFrame {
         if (stats.getComponentCount() > 0) body.add(stats, BorderLayout.NORTH);
         body.add(dashboardBottom(), BorderLayout.CENTER);
 
-        JComponent period = null;
-        if (settings.isShowWeekly()) {
-            Theme.FlatButton b = new Theme.FlatButton(showMonth ? "This Month" : "This Week",
-                    Icons.of(Icons.Name.CALENDAR, 20, Theme.TEXT), Theme.ButtonKind.SECONDARY);
-            b.setFont(Theme.font(Font.PLAIN, 15));
-            b.setHorizontalAlignment(SwingConstants.LEFT);
-            b.setIconTextGap(12);
-            b.setBorder(new EmptyBorder(11, 16, 11, 16));
-            b.setTrailingIcon(Icons.of(Icons.Name.CHEVRON_DOWN, 16, Theme.TEXT));
-            b.setPreferredSize(new Dimension(200, b.getPreferredSize().height));
-            b.setToolTipText("Show spending for this week or this month");
-            b.addActionListener(e -> showPeriodMenu(b));
-            period = b;
-        }
-        return pageShell("Dashboard", "Overview of your finances", period, body);
+        // The week/month switch only matters for the "Spent this week" card.
+        JComponent periodButton = settings.isShowWeekly() ? buildPeriodButton() : null;
+        return pageShell("Dashboard", "Overview of your finances", periodButton, body);
+    }
+
+    private JComponent buildPeriodButton() {
+        Theme.FlatButton button = new Theme.FlatButton(showMonth ? "This Month" : "This Week",
+                Icons.of(Icons.Name.CALENDAR, 20, Theme.TEXT), Theme.ButtonKind.SECONDARY);
+        button.setFont(Theme.font(Font.PLAIN, 15));
+        button.setHorizontalAlignment(SwingConstants.LEFT);
+        button.setIconTextGap(12);
+        button.setBorder(new EmptyBorder(11, 16, 11, 16));
+        button.setTrailingIcon(Icons.of(Icons.Name.CHEVRON_DOWN, 16, Theme.TEXT));
+        button.setPreferredSize(new Dimension(200, button.getPreferredSize().height));
+        button.setToolTipText("Show spending for this week or this month");
+        button.addActionListener(e -> showPeriodMenu(button));
+        return button;
     }
 
     private void showPeriodMenu(Theme.FlatButton anchor) {
@@ -631,24 +600,25 @@ public class MainApp extends JFrame {
         runRefreshers();
     }
 
+    /** Transactions and quick actions on the left, weekly budgets on the right. */
     private JComponent dashboardBottom() {
-        boolean tx = settings.isShowTransactions();
-        boolean budgets = settings.isShowBudget();
-        boolean actions = settings.isShowQuickActions();
-        if (!tx && !budgets && !actions) {
-            return top(Theme.text("Use Budget Plan \u203A Edit plan to choose what Moni shows here.",
+        boolean showTransactions = settings.isShowTransactions();
+        boolean showBudgets = settings.isShowBudget();
+        boolean showActions = settings.isShowQuickActions();
+        if (!showTransactions && !showBudgets && !showActions) {
+            return alignTop(Theme.text("Use Budget Plan › Edit plan to choose what Moni shows here.",
                     Theme.BODY, Theme.MUTED));
         }
 
-        JPanel left = clear(new BorderLayout(0, 14));
-        if (tx) left.add(dashboardTransactions(), BorderLayout.CENTER);
-        if (actions) left.add(buildActions(), tx ? BorderLayout.SOUTH : BorderLayout.NORTH);
-        if (!budgets) return left;
+        JPanel left = transparentPanel(new BorderLayout(0, 14));
+        if (showTransactions) left.add(dashboardTransactions(), BorderLayout.CENTER);
+        if (showActions) left.add(buildActions(), showTransactions ? BorderLayout.SOUTH : BorderLayout.NORTH);
+        if (!showBudgets) return left;
 
         JComponent budgetCard = buildBudgetCard();
-        if (!tx && !actions) return budgetCard;
+        if (!showTransactions && !showActions) return budgetCard;
 
-        JPanel row = clear(new GridBagLayout());
+        JPanel row = transparentPanel(new GridBagLayout());
         GridBagConstraints c = new GridBagConstraints();
         c.gridy = 0;
         c.fill = GridBagConstraints.BOTH;
@@ -664,17 +634,15 @@ public class MainApp extends JFrame {
     }
 
     private JComponent dashboardTransactions() {
-        Theme.FlatButton summary = button("This week's summary", Theme.ButtonKind.SECONDARY, this::showWeeklySummary);
-        summary.setIcon(Icons.of(Icons.Name.BARS, 16, Theme.TEXT));
         TransactionsPanel panel = new TransactionsPanel("Recent Transactions", Icons.Name.LIST, filterCategories(),
-                null, summary, buildWelcome(), "No transactions yet.");
+                null, summaryButton(), buildWelcome(), "No transactions yet.");
         transactionPanels.add(panel);
         return panel;
     }
 
     private JPanel buildActions() {
-        JPanel row = clear(new GridLayout(1, 3, 14, 0));
-        row.add(actionButton("+  Add expense", Icons.Name.RECEIPT, Theme.ButtonKind.PRIMARY, Color.WHITE,
+        JPanel row = transparentPanel(new GridLayout(1, 3, 14, 0));
+        row.add(actionButton("+  Add expense", Icons.Name.RECEIPT, Theme.ButtonKind.PRIMARY, Theme.ON_ACCENT,
                 "Record money you spent", this::expenseDialog));
         row.add(actionButton("+  Add money", Icons.Name.CASH, Theme.ButtonKind.SOFT, Theme.TEXT,
                 "Add your allowance or other money you received", this::fundsDialog));
@@ -683,68 +651,24 @@ public class MainApp extends JFrame {
         return row;
     }
 
-    private static Theme.FlatButton actionButton(String text, Icons.Name icon, Theme.ButtonKind kind, Color ink,
-                                                 String tip, Runnable action) {
-        Theme.FlatButton b = button(text, kind, action);
-        b.setIcon(Icons.of(icon, 22, ink));
-        b.setIconTextGap(12);
-        b.setFont(Theme.font(Font.BOLD, 15));
-        b.setBorder(new EmptyBorder(13, 14, 13, 14));
-        b.setToolTipText(tip);
-        return b;
-    }
-
-    // ---- the four cards at the top ------------------------------------
-
-    /** A tinted card: icon square, title and big number, then optional bar and caption underneath. */
-    private static Theme.RoundedPanel statCard(Theme.Tint tint, Icons.Name icon, JLabel title, JLabel value,
-                                               JComponent... below) {
-        Theme.RoundedPanel card = new Theme.RoundedPanel(new BorderLayout(0, 10), 18, tint.fill, tint.outline);
-        card.setBorder(new EmptyBorder(16, 18, 14, 18));
-
-        JPanel words = new JPanel();
-        words.setOpaque(false);
-        words.setLayout(new BoxLayout(words, BoxLayout.Y_AXIS));
-        Theme.stack(words, 1, title);
-        Theme.stack(words, 0, value);
-
-        JPanel head = clear(new BorderLayout(16, 0));
-        head.add(top(new Theme.IconBox(Icons.of(icon, 26, tint.ink), 54, tint.box, 14)), BorderLayout.WEST);
-        head.add(words, BorderLayout.CENTER);
-
-        JPanel foot = new JPanel();
-        foot.setOpaque(false);
-        foot.setLayout(new BoxLayout(foot, BoxLayout.Y_AXIS));
-        for (int i = 0; i < below.length; i++) Theme.stack(foot, i == 0 ? 0 : 8, below[i]);
-
-        card.add(head, BorderLayout.NORTH);
-        card.add(foot, BorderLayout.CENTER);
-        return card;
-    }
-
-    private static JLabel statTitle(String text) {
-        return new Theme.FitLabel(text, Theme.font(Font.BOLD, 14), Theme.TEXT);
-    }
-
-    private static Theme.FitLabel statValue() {
-        return new Theme.FitLabel(Theme.peso(0), Theme.STAT, Theme.TEXT);
-    }
-
-    private static Theme.WrapText caption(String text) {
-        return new Theme.WrapText(text, Theme.font(Font.PLAIN, 14), Theme.TEXT_SOFT);
-    }
+    // ---- the four cards at the top ----
 
     private JPanel walletCard() {
-        Theme.FitLabel value = statValue();
-        refreshers.add(() -> value.setText(Theme.peso(walletBalance)));
-        return statCard(Theme.BLUE, Icons.Name.WALLET, statTitle("Wallet"), value, caption(allowanceSummary()));
+        return statCard(Theme.MOSS, Icons.Name.WALLET, statTitle("Wallet"), walletValue(), caption(allowanceSummary()));
     }
 
     private JPanel savingsCard() {
         Theme.FitLabel value = statValue();
         refreshers.add(() -> value.setText(Theme.peso(savingsBalance)));
-        return statCard(Theme.MINT, Icons.Name.PIGGY_LINE, statTitle("Savings"), value,
+        return statCard(Theme.FERN, Icons.Name.PIGGY_LINE, statTitle("Savings"), value,
                 caption("Set aside from your wallet"));
+    }
+
+    /** Big number that always shows the current wallet balance. */
+    private Theme.FitLabel walletValue() {
+        Theme.FitLabel value = statValue();
+        refreshers.add(() -> value.setText(Theme.peso(walletBalance)));
+        return value;
     }
 
     /** "Spent this week" (or this month, from the drop-down above the cards). */
@@ -752,7 +676,6 @@ public class MainApp extends JFrame {
         JLabel title = statTitle("Spent this week");
         Theme.FitLabel value = statValue();
         Theme.Bar bar = new Theme.Bar(8);
-        bar.setTrack(new Color(0xEC, 0xE6, 0xDE));
         Theme.WrapText caption = caption(" ");
         refreshers.add(() -> {
             double limit = showMonth ? monthlyPace() : settings.getWeeklyLimit();
@@ -760,25 +683,24 @@ public class MainApp extends JFrame {
             double fraction = limit > 0 ? spent / limit : 0;
             title.setText(showMonth ? "Spent this month" : "Spent this week");
             value.setText(Theme.peso(spent));
-            bar.set(fraction, fraction >= 1 ? Theme.RED : fraction >= 0.8 ? Theme.AMBER : Theme.ACCENT);
+            bar.set(fraction, Theme.progressColor(fraction));
             if (limit <= 0) caption.setText("No weekly limit set yet");
             else if (showMonth) caption.setText("of about " + Theme.peso(limit) + " at your weekly limit");
             else caption.setText("of your " + Theme.peso(limit) + " weekly limit");
         });
-        return statCard(Theme.HONEY, Icons.Name.SWAP, title, value, bar, caption);
+        return statCard(Theme.OCHRE, Icons.Name.SWAP, title, value, bar, caption);
     }
 
-    /** The answer to the app's main question: how much can I still spend today? */
+    /** The app's main question: how much can I still spend today? */
     private JPanel todayCard() {
         Theme.FitLabel value = statValue();
         Theme.WrapText status = caption(" ");
-        Theme.RoundedPanel card = statCard(Theme.BLUSH, Icons.Name.RECEIPT, statTitle("Left to spend today"),
+        Theme.RoundedPanel card = statCard(Theme.CLAY, Icons.Name.RECEIPT, statTitle("Left to spend today"),
                 value, status);
         refreshers.add(() -> {
-            LocalDate today = appToday();
-            double plan = todayPlan(today);
-            double spent = spentOn(today);
-            double fraction = plan > 0 ? spent / plan : (spent > 0 ? 1 : 0);
+            double plan = todayPlan();
+            double spent = spentOn(today());
+            double fraction = usedFraction(spent, plan);
             value.setText(Theme.peso(Math.max(0, plan - spent)));
             card.setToolTipText(Theme.peso(spent) + " of " + Theme.peso(plan) + " spent today");
 
@@ -799,19 +721,11 @@ public class MainApp extends JFrame {
         return card;
     }
 
-    // ---- weekly budgets -------------------------------------------------
+    // ---- weekly budgets card (also on the Budget Plan page) ----
 
     private JComponent buildBudgetCard() {
-        Theme.RoundedPanel card = new Theme.RoundedPanel(new BorderLayout(0, 18), 18, Theme.CARD, Theme.CARD_OUTLINE);
+        Theme.RoundedPanel card = Theme.card(new BorderLayout(0, 18));
         card.setBorder(new EmptyBorder(18, 20, 16, 10));
-
-        JLabel range = Theme.text(weekRange(appToday()), Theme.font(Font.PLAIN, 13), Theme.TEXT_SOFT);
-        range.setBorder(new EmptyBorder(0, 38, 0, 0));
-        JPanel head = new JPanel();
-        head.setOpaque(false);
-        head.setLayout(new BoxLayout(head, BoxLayout.Y_AXIS));
-        Theme.stack(head, 0, cardTitle("Weekly Budgets", Icons.Name.PIE));
-        Theme.stack(head, 2, range);
 
         Theme.Column list = new Theme.Column();
         list.setBorder(new EmptyBorder(0, 0, 0, 12));
@@ -819,7 +733,7 @@ public class MainApp extends JFrame {
         scroll.setPreferredSize(new Dimension(220, 160));
         refreshers.add(() -> fillBudgets(list));
 
-        card.add(head, BorderLayout.NORTH);
+        card.add(cardTitle("Weekly Budgets", Icons.Name.PIE, weekRange(today()), Theme.TEXT_SOFT), BorderLayout.NORTH);
         card.add(scroll, BorderLayout.CENTER);
         return card;
     }
@@ -843,39 +757,39 @@ public class MainApp extends JFrame {
 
     private static JPanel budgetRow(String category, double spent, double limit) {
         Theme.Tint tint = Theme.tintFor(category);
-        double fraction = limit > 0 ? spent / limit : (spent > 0 ? 1 : 0);
+        boolean over = spent > limit;
 
-        JPanel head = clear(new BorderLayout(8, 0));
+        JPanel head = transparentPanel(new BorderLayout(8, 0));
         head.add(Theme.text(category, Theme.font(Font.BOLD, 15), Theme.TEXT), BorderLayout.WEST);
         head.add(Theme.text(Theme.peso(spent) + " / " + Theme.peso(limit), Theme.font(Font.PLAIN, 14), Theme.TEXT),
                 BorderLayout.EAST);
 
         Theme.Bar bar = new Theme.Bar(8);
-        bar.set(fraction, spent > limit ? Theme.RED : tint.ink);
+        bar.set(usedFraction(spent, limit), over ? Theme.RED : tint.ink);
 
-        JLabel note = spent > limit
+        JLabel note = over
                 ? Theme.text(Theme.peso(spent - limit) + " over budget", Theme.font(Font.PLAIN, 13), Theme.RED)
                 : Theme.text(Theme.peso(limit - spent) + " left", Theme.font(Font.PLAIN, 13), Theme.TEXT_SOFT);
 
-        JPanel words = clear(new BorderLayout(0, 8));
+        JPanel words = transparentPanel(new BorderLayout(0, 8));
         words.add(head, BorderLayout.NORTH);
         words.add(bar, BorderLayout.CENTER);
         words.add(note, BorderLayout.SOUTH);
 
-        JPanel row = clear(new BorderLayout(16, 0));
-        row.add(top(new Theme.IconBox(Icons.of(Icons.forCategory(category), 24, tint.ink), 48, tint.box, 12)),
+        JPanel row = transparentPanel(new BorderLayout(16, 0));
+        row.add(alignTop(new Theme.IconBox(Icons.of(Icons.forCategory(category), 24, tint.ink), 48, tint.box, 12)),
                 BorderLayout.WEST);
         row.add(words, BorderLayout.CENTER);
         return row;
     }
 
-    // ---- welcome guide (shown instead of the table until the first transaction) --
+    // ---- welcome guide, shown instead of the table until the first transaction ----
 
     private JComponent buildWelcome() {
         Theme.Column col = new Theme.Column();
         col.setBorder(new EmptyBorder(18, 20, 18, 20));
 
-        JPanel title = clear(new BorderLayout(12, 0));
+        JPanel title = transparentPanel(new BorderLayout(12, 0));
         title.add(Theme.text("Welcome! Here's how Moni works", Theme.H2, Theme.TEXT), BorderLayout.CENTER);
         title.add(button("Add your allowance", Theme.ButtonKind.PRIMARY, this::fundsDialog), BorderLayout.EAST);
         col.addRow(title, 0);
@@ -885,71 +799,60 @@ public class MainApp extends JFrame {
 
     private static void addSteps(Theme.Column col, int firstGap) {
         for (int i = 0; i < HOW_IT_WORKS.length; i++) {
-            JPanel words = new JPanel();
-            words.setOpaque(false);
-            words.setLayout(new BoxLayout(words, BoxLayout.Y_AXIS));
+            JPanel words = verticalPanel();
             Theme.stack(words, 3, Theme.text(HOW_IT_WORKS[i][0], Theme.BODY_BOLD, Theme.TEXT));
             Theme.stack(words, 2, new Theme.WrapText(HOW_IT_WORKS[i][1], Theme.BODY, Theme.MUTED));
 
-            JPanel row = clear(new BorderLayout(12, 0));
-            row.add(top(new Theme.Badge(String.valueOf(i + 1), 26, Theme.ACCENT_SOFT, Theme.ACCENT)), BorderLayout.WEST);
+            JPanel row = transparentPanel(new BorderLayout(12, 0));
+            row.add(alignTop(new Theme.Badge(String.valueOf(i + 1), 26, Theme.ACCENT_SOFT, Theme.ACCENT)),
+                    BorderLayout.WEST);
             row.add(words, BorderLayout.CENTER);
             col.addRow(row, i == 0 ? firstGap : 12);
         }
     }
 
     // =====================================================================
-    // Other pages
+    // Transactions, Budget Plan and Savings pages
     // =====================================================================
 
     private JComponent buildTransactionsPage() {
-        Theme.FlatButton summary = button("This week's summary", Theme.ButtonKind.SECONDARY, this::showWeeklySummary);
-        summary.setIcon(Icons.of(Icons.Name.BARS, 16, Theme.TEXT));
         transactionsPage = new TransactionsPanel("All transactions", Icons.Name.LIST, filterCategories(), null,
-                summary, null, "No transactions yet. Use Add money to record your allowance.");
+                summaryButton(), null, "No transactions yet. Use Add money to record your allowance.");
         transactionPanels.add(transactionsPage);
 
         JPanel actions = Theme.row(10,
-                smallAction("+  Add expense", Icons.Name.RECEIPT, Theme.ButtonKind.PRIMARY, Color.WHITE, this::expenseDialog),
+                smallAction("+  Add expense", Icons.Name.RECEIPT, Theme.ButtonKind.PRIMARY, Theme.ON_ACCENT, this::expenseDialog),
                 smallAction("+  Add money", Icons.Name.CASH, Theme.ButtonKind.SOFT, Theme.TEXT, this::fundsDialog));
         return pageShell("Transactions", "Every peso in and out of your wallet", actions, transactionsPage);
     }
 
     private JComponent buildBudgetPage() {
         String frequency = settings.getAllowanceFrequency().toLowerCase();
-        JPanel cards = clear(new GridLayout(1, 3, 16, 0));
-        cards.add(statCard(Theme.VIOLET, Icons.Name.COINS, statTitle("Allowance"),
+        JPanel cards = transparentPanel(new GridLayout(1, 3, 16, 0));
+        cards.add(statCard(Theme.MOSS, Icons.Name.COINS, statTitle("Allowance"),
                 fixedValue(Theme.peso(settings.getAllowanceAmount())),
                 caption("Received " + frequency + ", about " + Theme.peso(settings.getDailyAllowance()) + " a day")));
-        cards.add(statCard(Theme.BLUSH, Icons.Name.RECEIPT, statTitle("Daily limit"),
+        cards.add(statCard(Theme.CLAY, Icons.Name.RECEIPT, statTitle("Daily limit"),
                 fixedValue(Theme.peso(settings.getDailyLimit())),
                 caption("The most you plan to spend in one day")));
-        cards.add(statCard(Theme.HONEY, Icons.Name.CALENDAR, statTitle("Weekly limit"),
+        cards.add(statCard(Theme.OCHRE, Icons.Name.CALENDAR, statTitle("Weekly limit"),
                 fixedValue(Theme.peso(settings.getWeeklyLimit())),
                 caption("Shared across the days left in each week")));
 
-        JPanel body = clear(new BorderLayout(0, 20));
+        JPanel body = transparentPanel(new BorderLayout(0, 20));
         body.add(cards, BorderLayout.NORTH);
         body.add(buildBudgetCard(), BorderLayout.CENTER);
 
-        Theme.FlatButton edit = smallAction("Edit plan", Icons.Name.SLIDERS, Theme.ButtonKind.PRIMARY, Color.WHITE,
+        Theme.FlatButton edit = smallAction("Edit plan", Icons.Name.SLIDERS, Theme.ButtonKind.PRIMARY, Theme.ON_ACCENT,
                 this::customizeDashboard);
         edit.setToolTipText("Change your allowance, limits, categories and dashboard sections");
         return pageShell("Budget Plan", "Your allowance, spending limits and weekly category budgets", edit, body);
     }
 
-    private static Theme.FitLabel fixedValue(String text) {
-        Theme.FitLabel label = statValue();
-        label.setText(text);
-        return label;
-    }
-
     private JComponent buildSavingsPage() {
-        JPanel cards = clear(new GridLayout(1, 2, 16, 0));
+        JPanel cards = transparentPanel(new GridLayout(1, 2, 16, 0));
         cards.add(savingsCard());
-        Theme.FitLabel wallet = statValue();
-        refreshers.add(() -> wallet.setText(Theme.peso(walletBalance)));
-        cards.add(statCard(Theme.BLUE, Icons.Name.WALLET, statTitle("Wallet"), wallet,
+        cards.add(statCard(Theme.MOSS, Icons.Name.WALLET, statTitle("Wallet"), walletValue(),
                 caption("What you can still spend or move to savings")));
 
         TransactionsPanel history = new TransactionsPanel("Savings history", Icons.Name.PIGGY_LINE,
@@ -957,26 +860,37 @@ public class MainApp extends JFrame {
                 "Nothing moved to savings yet. Use Move to savings to start.");
         transactionPanels.add(history);
 
-        JPanel body = clear(new BorderLayout(0, 20));
+        JPanel body = transparentPanel(new BorderLayout(0, 20));
         body.add(cards, BorderLayout.NORTH);
         body.add(history, BorderLayout.CENTER);
 
         Theme.FlatButton move = smallAction("Move to savings", Icons.Name.PIGGY_LINE, Theme.ButtonKind.PRIMARY,
-                Color.WHITE, this::savingsDialog);
+                Theme.ON_ACCENT, this::savingsDialog);
         return pageShell("Savings", "Money you've set aside from your wallet", move, body);
     }
 
+    // =====================================================================
+    // Reports page
+    // =====================================================================
+
     private JComponent buildReportsPage() {
+        JPanel lower = transparentPanel(new GridLayout(1, 2, 16, 0));
+        lower.add(buildDailyChartCard());
+        lower.add(buildCategoryReportCard());
+
+        JPanel body = transparentPanel(new BorderLayout(0, 20));
+        body.add(buildReportTotals(), BorderLayout.NORTH);
+        body.add(lower, BorderLayout.CENTER);
+
+        Theme.FlatButton summary = smallAction("This week's summary", Icons.Name.LIST, Theme.ButtonKind.SECONDARY,
+                Theme.TEXT, this::showWeeklySummary);
+        return pageShell("Reports", "This week at a glance, " + weekRange(today()), summary, body);
+    }
+
+    private JPanel buildReportTotals() {
         Theme.FitLabel in = statValue();
         Theme.FitLabel out = statValue();
         Theme.FitLabel net = statValue();
-        JPanel stats = clear(new GridLayout(1, 3, 16, 0));
-        stats.add(statCard(Theme.MINT, Icons.Name.CASH, statTitle("Money in"), in,
-                caption("Allowance and other money received")));
-        stats.add(statCard(Theme.BLUSH, Icons.Name.RECEIPT, statTitle("Money out"), out,
-                caption("Spending plus money moved to savings")));
-        stats.add(statCard(Theme.BLUE, Icons.Name.SWAP, statTitle("Net"), net,
-                caption("Money in minus money out")));
         refreshers.add(() -> {
             double[] totals = weekTotals();
             in.setText(Theme.peso(totals[0]));
@@ -984,218 +898,147 @@ public class MainApp extends JFrame {
             net.setText(Theme.signedPeso(totals[0] - totals[1]));
         });
 
-        // Day-by-day chart
+        JPanel stats = transparentPanel(new GridLayout(1, 3, 16, 0));
+        stats.add(statCard(Theme.FERN, Icons.Name.CASH, statTitle("Money in"), in,
+                caption("Allowance and other money received")));
+        stats.add(statCard(Theme.CLAY, Icons.Name.RECEIPT, statTitle("Money out"), out,
+                caption("Spending plus money moved to savings")));
+        stats.add(statCard(Theme.SLATE, Icons.Name.SWAP, statTitle("Net"), net,
+                caption("Money in minus money out")));
+        return stats;
+    }
+
+    private JComponent buildDailyChartCard() {
         DailyChart chart = new DailyChart();
         refreshers.add(() -> chart.setData(dailySpending(), settings.getDailyLimit(),
-                appToday().getDayOfWeek().getValue() - 1));
-        Theme.RoundedPanel chartCard = whiteCard(new BorderLayout(0, 12));
-        JPanel chartHead = new JPanel();
-        chartHead.setOpaque(false);
-        chartHead.setLayout(new BoxLayout(chartHead, BoxLayout.Y_AXIS));
-        Theme.stack(chartHead, 0, cardTitle("Daily spending", Icons.Name.BARS));
-        JLabel chartNote = Theme.text("Each day compared with your daily limit", Theme.font(Font.PLAIN, 13), Theme.MUTED);
-        chartNote.setBorder(new EmptyBorder(0, 38, 0, 0));
-        Theme.stack(chartHead, 2, chartNote);
-        chartCard.add(chartHead, BorderLayout.NORTH);
-        chartCard.add(chart, BorderLayout.CENTER);
+                today().getDayOfWeek().getValue() - 1));
 
-        // Spending by category
+        Theme.RoundedPanel card = Theme.card(new BorderLayout(0, 12));
+        card.add(cardTitle("Daily spending", Icons.Name.BARS, "Each day compared with your daily limit", Theme.MUTED),
+                BorderLayout.NORTH);
+        card.add(chart, BorderLayout.CENTER);
+        return card;
+    }
+
+    private JComponent buildCategoryReportCard() {
         Theme.Column categories = new Theme.Column();
         categories.setBorder(new EmptyBorder(0, 0, 0, 12));
         refreshers.add(() -> fillCategoryReport(categories));
-        Theme.RoundedPanel categoryCard = whiteCard(new BorderLayout(0, 16));
-        categoryCard.setBorder(new EmptyBorder(18, 20, 16, 10));
-        categoryCard.add(cardTitle("Spending by category", Icons.Name.PIE), BorderLayout.NORTH);
         JScrollPane scroll = Theme.scroll(categories);
         scroll.setPreferredSize(new Dimension(200, 220));
-        categoryCard.add(scroll, BorderLayout.CENTER);
 
-        JPanel lower = clear(new GridLayout(1, 2, 16, 0));
-        lower.add(chartCard);
-        lower.add(categoryCard);
-
-        JPanel body = clear(new BorderLayout(0, 20));
-        body.add(stats, BorderLayout.NORTH);
-        body.add(lower, BorderLayout.CENTER);
-
-        Theme.FlatButton summary = smallAction("This week's summary", Icons.Name.LIST, Theme.ButtonKind.SECONDARY,
-                Theme.TEXT, this::showWeeklySummary);
-        return pageShell("Reports", "This week at a glance, " + weekRange(appToday()), summary, body);
+        Theme.RoundedPanel card = Theme.card(new BorderLayout(0, 16));
+        card.setBorder(new EmptyBorder(18, 20, 16, 10));
+        card.add(cardTitle("Spending by category", Icons.Name.PIE), BorderLayout.NORTH);
+        card.add(scroll, BorderLayout.CENTER);
+        return card;
     }
 
     private void fillCategoryReport(Theme.Column list) {
         list.clearRows();
-        Map<String, Double> spentBy = new LinkedHashMap<>();
-        for (String c : settings.getCategoryLimits().keySet()) spentBy.put(c, 0.0);
+
+        // Start with every budget category at zero so they keep the user's order.
+        Map<String, Double> spentByCategory = new LinkedHashMap<>();
+        for (String category : settings.getCategoryLimits().keySet()) spentByCategory.put(category, 0.0);
         double total = 0;
         for (TransactionRecord r : weekTransactions) {
-            if (!isSpending(r)) continue;
-            spentBy.merge(r.getCategorySource(), Math.abs(r.getAmount()), Double::sum);
+            if (!r.isSpending()) continue;
+            spentByCategory.merge(r.getCategorySource(), Math.abs(r.getAmount()), Double::sum);
             total += Math.abs(r.getAmount());
         }
+
         if (total <= 0) {
             list.addRow(new Theme.WrapText("No spending recorded this week yet.", Theme.BODY, Theme.MUTED), 0);
-        }
-        boolean first = true;
-        for (Map.Entry<String, Double> e : spentBy.entrySet()) {
-            if (total <= 0) break;
-            Theme.Tint tint = Theme.tintFor(e.getKey());
-            double share = e.getValue() / total;
-
-            JPanel head = clear(new BorderLayout(8, 0));
-            head.add(Theme.text(e.getKey(), Theme.font(Font.BOLD, 14), Theme.TEXT), BorderLayout.WEST);
-            head.add(Theme.text(Theme.peso(e.getValue()), Theme.font(Font.BOLD, 14), Theme.TEXT), BorderLayout.EAST);
-            Theme.Bar bar = new Theme.Bar(8);
-            bar.set(share, tint.ink);
-            JLabel note = Theme.text(Math.round(share * 100) + "% of this week's spending",
-                    Theme.font(Font.PLAIN, 13), Theme.MUTED);
-
-            JPanel words = clear(new BorderLayout(0, 7));
-            words.add(head, BorderLayout.NORTH);
-            words.add(bar, BorderLayout.CENTER);
-            words.add(note, BorderLayout.SOUTH);
-            JPanel row = clear(new BorderLayout(14, 0));
-            row.add(top(new Theme.IconBox(Icons.of(Icons.forCategory(e.getKey()), 20, tint.ink), 40, tint.box, 10)),
-                    BorderLayout.WEST);
-            row.add(words, BorderLayout.CENTER);
-            list.addRow(row, first ? 0 : 18);
-            first = false;
+        } else {
+            boolean first = true;
+            for (Map.Entry<String, Double> e : spentByCategory.entrySet()) {
+                list.addRow(categoryShareRow(e.getKey(), e.getValue(), e.getValue() / total), first ? 0 : 18);
+                first = false;
+            }
         }
         list.revalidate();
         list.repaint();
     }
 
+    private static JPanel categoryShareRow(String category, double spent, double share) {
+        Theme.Tint tint = Theme.tintFor(category);
+
+        JPanel head = transparentPanel(new BorderLayout(8, 0));
+        head.add(Theme.text(category, Theme.font(Font.BOLD, 14), Theme.TEXT), BorderLayout.WEST);
+        head.add(Theme.text(Theme.peso(spent), Theme.font(Font.BOLD, 14), Theme.TEXT), BorderLayout.EAST);
+        Theme.Bar bar = new Theme.Bar(8);
+        bar.set(share, tint.ink);
+        JLabel note = Theme.text(Math.round(share * 100) + "% of this week's spending",
+                Theme.font(Font.PLAIN, 13), Theme.MUTED);
+
+        JPanel words = transparentPanel(new BorderLayout(0, 7));
+        words.add(head, BorderLayout.NORTH);
+        words.add(bar, BorderLayout.CENTER);
+        words.add(note, BorderLayout.SOUTH);
+
+        JPanel row = transparentPanel(new BorderLayout(14, 0));
+        row.add(alignTop(new Theme.IconBox(Icons.of(Icons.forCategory(category), 20, tint.ink), 40, tint.box, 10)),
+                BorderLayout.WEST);
+        row.add(words, BorderLayout.CENTER);
+        return row;
+    }
+
+    // =====================================================================
+    // Settings page
+    // =====================================================================
+
     private JComponent buildSettingsPage() {
         Theme.Column col = new Theme.Column();
-        col.addRow(settingRow(Icons.Name.SLIDERS, Theme.VIOLET, "Budget plan",
+        col.addRow(settingRow(Icons.Name.SLIDERS, Theme.MOSS, "Budget plan",
                 "Change your allowance, spending limits, categories and which sections the dashboard shows.",
                 button("Edit plan", Theme.ButtonKind.SECONDARY, this::customizeDashboard)), 0);
-        col.addRow(settingRow(Icons.Name.CALENDAR, Theme.HONEY, "Presentation date",
-                "Moni is treating " + appToday().format(LONG_DATE) + " as today. Change it to show a "
+        col.addRow(settingRow(Icons.Name.CALENDAR, Theme.OCHRE, "Date",
+                "Moni is treating " + today().format(LONG_DATE) + " as today. Change it to see a "
                         + "different day; the dates of your transactions stay the same.",
-                button("Change date", Theme.ButtonKind.SECONDARY, this::changePresentationDate)), 14);
-        col.addRow(settingRow(Icons.Name.INFO, Theme.BLUE, "How Moni works",
+                button("Change date", Theme.ButtonKind.SECONDARY, this::changeDate)), 14);
+        boolean dark = Theme.isDarkMode();
+        col.addRow(settingRow(dark ? Icons.Name.SUN : Icons.Name.MOON, Theme.FERN, "Appearance",
+                dark ? "Moni is using dark colours, which are easier on the eyes at night."
+                     : "Moni is using light colours. Dark mode is easier on the eyes at night.",
+                button(dark ? "Use light mode" : "Use dark mode", Theme.ButtonKind.SECONDARY,
+                        this::toggleDarkMode)), 14);
+        col.addRow(settingRow(Icons.Name.INFO, Theme.SLATE, "How Moni works",
                 "A short guide to every number on the dashboard.",
                 button("Open guide", Theme.ButtonKind.SECONDARY, this::showHowItWorks)), 14);
-        col.addRow(settingRow(Icons.Name.LOGOUT, Theme.BLUSH, "Account",
+        col.addRow(settingRow(Icons.Name.LOGOUT, Theme.CLAY, "Account",
                 "Signed in as " + currentUser.getFullName() + ", student number "
                         + currentUser.getStudentNumber() + " (" + currentUser.getEmail() + ").",
                 button("Log out", Theme.ButtonKind.SECONDARY, this::logout)), 14);
-        return pageShell("Settings", "Your plan, presentation date and account", null, col);
+        return pageShell("Settings", "Your plan, date, appearance and account", null, col);
     }
 
     private static JPanel settingRow(Icons.Name icon, Theme.Tint tint, String title, String description,
                                      JComponent action) {
-        Theme.RoundedPanel card = new Theme.RoundedPanel(new BorderLayout(16, 0), 18, Theme.CARD, Theme.CARD_OUTLINE);
+        Theme.RoundedPanel card = Theme.card(new BorderLayout(16, 0));
         card.setBorder(new EmptyBorder(16, 18, 16, 18));
-        JPanel words = new JPanel();
-        words.setOpaque(false);
-        words.setLayout(new BoxLayout(words, BoxLayout.Y_AXIS));
+        JPanel words = verticalPanel();
         Theme.stack(words, 0, Theme.text(title, Theme.font(Font.BOLD, 15), Theme.TEXT));
         Theme.stack(words, 4, new Theme.WrapText(description, Theme.BODY, Theme.MUTED));
-        card.add(top(new Theme.IconBox(Icons.of(icon, 22, tint.ink), 44, tint.box, 12)), BorderLayout.WEST);
+        card.add(alignTop(new Theme.IconBox(Icons.of(icon, 22, tint.ink), 44, tint.box, 12)), BorderLayout.WEST);
         card.add(words, BorderLayout.CENTER);
         card.add(centred(action), BorderLayout.EAST);
         return card;
     }
 
-    private static Theme.FlatButton smallAction(String text, Icons.Name icon, Theme.ButtonKind kind, Color ink,
-                                                Runnable action) {
-        Theme.FlatButton b = button(text, kind, action);
-        b.setIcon(Icons.of(icon, 18, ink));
-        b.setBorder(new EmptyBorder(11, 16, 11, 16));
-        b.setFont(Theme.font(Font.BOLD, 14));
-        return b;
-    }
-
-    /** Bar chart of this week's spending, Monday to Sunday, with the daily limit as a dashed line. */
-    private static final class DailyChart extends JComponent {
-        private double[] values = new double[7];
-        private double limit;
-        private int todayIndex = -1;
-
-        DailyChart() {
-            setPreferredSize(new Dimension(300, 220));
-        }
-
-        void setData(double[] dayValues, double dailyLimit, int today) {
-            values = dayValues;
-            limit = dailyLimit;
-            todayIndex = today;
-            repaint();
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            Theme.smoothText(g2);
-
-            int top = 26;
-            int bottom = 28;
-            int w = getWidth();
-            int chartH = Math.max(40, getHeight() - top - bottom);
-            double max = limit;
-            for (double v : values) max = Math.max(max, v);
-            if (max <= 0) max = 1;
-            max *= 1.15;
-
-            Font small = Theme.font(Font.PLAIN, 12);
-            Font smallBold = Theme.font(Font.BOLD, 12);
-            int slot = w / 7;
-            int barW = Math.min(38, (int) (slot * 0.55));
-            for (int i = 0; i < 7; i++) {
-                int x = i * slot + (slot - barW) / 2;
-                int bh = (int) Math.round(values[i] / max * chartH);
-                int baseY = top + chartH;
-                if (values[i] > 0) {
-                    boolean over = limit > 0 && values[i] > limit;
-                    g2.setColor(over ? Theme.RED : i == todayIndex ? Theme.ACCENT : Theme.ACCENT_MID);
-                    g2.fillRoundRect(x, baseY - Math.max(bh, 6), barW, Math.max(bh, 6), 10, 10);
-                    g2.setFont(small);
-                    g2.setColor(Theme.TEXT_SOFT);
-                    String label = Theme.peso(values[i]);
-                    int lw = g2.getFontMetrics().stringWidth(label);
-                    g2.drawString(label, x + (barW - lw) / 2, baseY - Math.max(bh, 6) - 6);
-                } else {
-                    g2.setColor(Theme.TRACK);
-                    g2.fillRoundRect(x, baseY - 4, barW, 4, 4, 4);
-                }
-                g2.setFont(i == todayIndex ? smallBold : small);
-                g2.setColor(i == todayIndex ? Theme.TEXT : Theme.MUTED);
-                String day = i == todayIndex ? "Today" : DAY_NAMES[i];
-                int dw = g2.getFontMetrics().stringWidth(day);
-                g2.drawString(day, i * slot + (slot - dw) / 2, baseY + 20);
-            }
-
-            if (limit > 0) {
-                int y = top + chartH - (int) Math.round(limit / max * chartH);
-                g2.setColor(Theme.AMBER);
-                g2.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 1f,
-                        new float[]{6f, 5f}, 0f));
-                g2.drawLine(0, y, w, y);
-                g2.setFont(smallBold);
-                String label = "Daily limit " + Theme.peso(limit);
-                g2.drawString(label, w - g2.getFontMetrics().stringWidth(label), y - 6);
-            }
-            g2.dispose();
-        }
-    }
-
     // =====================================================================
-    // Data refresh
+    // Loading data and spending calculations
     // =====================================================================
 
     /** Reloads balances and transactions from the database and redraws every page. */
-    private void refreshDashboard() {
-        LocalDate today = appToday();
+    private void reloadData() {
+        LocalDate today = today();
         try {
             MoniDatabase.AccountData account = MoniDatabase.loadAccount(currentUser);
             walletBalance = account.walletBalance;
             savingsBalance = account.savingsBalance;
             weekTransactions = MoniDatabase.getTransactions(
                     currentUser, MoniDatabase.weekStart(today), MoniDatabase.weekEnd(today));
-            recentTransactions = MoniDatabase.getRecentTransactions(currentUser, RECENT_LIMIT);
+            recentTransactions = MoniDatabase.getRecentTransactions(currentUser, RECENT_TRANSACTION_LIMIT);
             monthSpent = MoniDatabase.getSpent(currentUser, MoniDatabase.monthStart(today), MoniDatabase.monthEnd(today));
         } catch (Exception e) {
             showError(this, "Could not load your latest data from the database.", e);
@@ -1208,17 +1051,10 @@ public class MainApp extends JFrame {
         for (Runnable r : refreshers) r.run();
     }
 
-    // ---- totals worked out from this week's transactions -----------------
-
-    /** Spending means money out, excluding transfers into savings. */
-    private static boolean isSpending(TransactionRecord r) {
-        return MONEY_OUT.equals(r.getFlowType()) && !SAVINGS.equals(r.getCategorySource());
-    }
-
     private double spentOn(LocalDate day) {
         double total = 0;
         for (TransactionRecord r : weekTransactions) {
-            if (isSpending(r) && LocalDate.parse(r.getDate()).equals(day)) total += Math.abs(r.getAmount());
+            if (r.isSpending() && r.getDate().equals(day)) total += Math.abs(r.getAmount());
         }
         return total;
     }
@@ -1226,7 +1062,7 @@ public class MainApp extends JFrame {
     private double spentThisWeek() {
         double total = 0;
         for (TransactionRecord r : weekTransactions) {
-            if (isSpending(r)) total += Math.abs(r.getAmount());
+            if (r.isSpending()) total += Math.abs(r.getAmount());
         }
         return total;
     }
@@ -1234,7 +1070,7 @@ public class MainApp extends JFrame {
     private double spentThisWeek(String category) {
         double total = 0;
         for (TransactionRecord r : weekTransactions) {
-            if (isSpending(r) && category.equals(r.getCategorySource())) total += Math.abs(r.getAmount());
+            if (r.isSpending() && category.equals(r.getCategorySource())) total += Math.abs(r.getAmount());
         }
         return total;
     }
@@ -1243,7 +1079,9 @@ public class MainApp extends JFrame {
     private double[] dailySpending() {
         double[] days = new double[7];
         for (TransactionRecord r : weekTransactions) {
-            if (isSpending(r)) days[LocalDate.parse(r.getDate()).getDayOfWeek().getValue() - 1] += Math.abs(r.getAmount());
+            if (!r.isSpending()) continue;
+            int dayIndex = r.getDate().getDayOfWeek().getValue() - 1;
+            days[dayIndex] += Math.abs(r.getAmount());
         }
         return days;
     }
@@ -1261,15 +1099,16 @@ public class MainApp extends JFrame {
 
     /** The weekly limit spread over this whole month, for the "This Month" view. */
     private double monthlyPace() {
-        return settings.getWeeklyLimit() / 7.0 * appToday().lengthOfMonth();
+        return settings.getWeeklyLimit() / 7.0 * today().lengthOfMonth();
     }
 
     /**
-     * Today's spending plan: what is left of this week's limit, spread over the remaining days
-     * (today included), but never more than the daily limit. Today's own spending is excluded
-     * from the pool so it is only subtracted once, on the card.
+     * Today's spending plan: what's left of the weekly limit, split over the days left in the
+     * week (today included), but never more than the daily limit. Today's own spending is left
+     * out here because the "Left to spend today" card subtracts it.
      */
-    private double todayPlan(LocalDate today) {
+    private double todayPlan() {
+        LocalDate today = today();
         double dailyLimit = settings.getDailyLimit();
         double weeklyLimit = settings.getWeeklyLimit();
         double spentBeforeToday = spentThisWeek() - spentOn(today);
@@ -1282,44 +1121,53 @@ public class MainApp extends JFrame {
         return plan;
     }
 
-    /** Messages for the bell: {level, text}, where level is "red", "amber" or "info". */
-    private List<String[]> alerts() {
-        List<String[]> list = new ArrayList<>();
-        LocalDate today = appToday();
+    /** spent / limit, treating any spending against a zero limit as fully used. */
+    private static double usedFraction(double spent, double limit) {
+        if (limit > 0) return spent / limit;
+        return spent > 0 ? 1 : 0;
+    }
+
+    /** Messages for the notification bell. */
+    private List<Alert> alerts() {
+        List<Alert> list = new ArrayList<>();
 
         if (settings.getAllowanceAmount() <= 0) {
-            list.add(new String[]{"info", "Your allowance is set to " + Theme.peso(0)
-                    + ". Add it in Budget Plan so Moni can plan your spending."});
+            list.add(new Alert(Theme.ACCENT, "Your allowance is set to " + Theme.peso(0)
+                    + ". Add it in Budget Plan so Moni can plan your spending."));
         }
-        double plan = todayPlan(today);
-        double spentToday = spentOn(today);
+
+        double plan = todayPlan();
+        double spentToday = spentOn(today());
         if (plan > 0 && spentToday > plan) {
-            list.add(new String[]{"red", "You're " + Theme.peso(spentToday - plan) + " over today's plan."});
+            list.add(new Alert(Theme.RED, "You're " + Theme.peso(spentToday - plan) + " over today's plan."));
         }
-        double weekly = settings.getWeeklyLimit();
-        double week = spentThisWeek();
-        if (weekly > 0 && week >= weekly) {
-            list.add(new String[]{"red", "You've used all of this week's " + Theme.peso(weekly) + " limit."});
-        } else if (weekly > 0 && week >= weekly * 0.8) {
-            list.add(new String[]{"amber", "You've used " + Math.round(week / weekly * 100)
-                    + "% of this week's " + Theme.peso(weekly) + " limit."});
+
+        double weeklyLimit = settings.getWeeklyLimit();
+        double spentWeek = spentThisWeek();
+        if (weeklyLimit > 0 && spentWeek >= weeklyLimit) {
+            list.add(new Alert(Theme.RED, "You've used all of this week's " + Theme.peso(weeklyLimit) + " limit."));
+        } else if (weeklyLimit > 0 && spentWeek >= weeklyLimit * NEAR_LIMIT) {
+            list.add(new Alert(Theme.AMBER, "You've used " + Math.round(spentWeek / weeklyLimit * 100)
+                    + "% of this week's " + Theme.peso(weeklyLimit) + " limit."));
         }
+
         for (Map.Entry<String, Double> e : settings.getCategoryLimits().entrySet()) {
             double limit = e.getValue();
             double spent = spentThisWeek(e.getKey());
             if (limit <= 0) continue;
             if (spent > limit) {
-                list.add(new String[]{"red", e.getKey() + " is " + Theme.peso(spent - limit) + " over budget this week."});
-            } else if (spent >= limit * 0.8) {
-                list.add(new String[]{"amber", e.getKey() + ": " + Theme.peso(spent) + " of "
-                        + Theme.peso(limit) + " used this week."});
+                list.add(new Alert(Theme.RED, e.getKey() + " is " + Theme.peso(spent - limit)
+                        + " over budget this week."));
+            } else if (spent >= limit * NEAR_LIMIT) {
+                list.add(new Alert(Theme.AMBER, e.getKey() + ": " + Theme.peso(spent) + " of "
+                        + Theme.peso(limit) + " used this week."));
             }
         }
         return list;
     }
 
     // =====================================================================
-    // Actions
+    // Add expense / Add money / Move to savings
     // =====================================================================
 
     private void expenseDialog() {
@@ -1330,81 +1178,96 @@ public class MainApp extends JFrame {
             return;
         }
 
-        FormDialog d = new FormDialog("Add expense", "Record money you spent from your wallet.", "Record expense");
-        JTextField amount = Theme.field();
-        JComboBox<String> category = new JComboBox<>(limits.keySet().toArray(new String[0]));
-        Theme.styleCombo(category);
-        JTextField description = Theme.field();
+        FormDialog dialog = new FormDialog(this, "Add expense", "Record money you spent from your wallet.",
+                "Record expense");
+        JTextField amountField = Theme.field();
+        JComboBox<String> categoryBox = new JComboBox<>(limits.keySet().toArray(new String[0]));
+        Theme.styleCombo(categoryBox);
+        JTextField descriptionField = Theme.field();
         JLabel budgetNote = Theme.text(" ", Theme.SMALL, Theme.MUTED);
 
-        d.addRow("Amount (\u20B1)", amount);
-        d.addRow("Category", category);
-        d.addNote(budgetNote);
-        d.addRow("Description", description);
-        d.addNote(Theme.text("Wallet balance: " + Theme.money(walletBalance), Theme.SMALL, Theme.MUTED));
+        dialog.addRow("Amount (₱)", amountField);
+        dialog.addRow("Category", categoryBox);
+        dialog.addNote(budgetNote);
+        dialog.addRow("Description", descriptionField);
+        dialog.addNote(Theme.text("Wallet balance: " + Theme.money(walletBalance), Theme.SMALL, Theme.MUTED));
 
         Runnable updateNote = () -> {
-            String c = (String) category.getSelectedItem();
-            double spent = spentThisWeek(c);
-            double limit = limits.get(c);
-            budgetNote.setText(c + " this week: " + Theme.money(spent) + " of " + Theme.money(limit));
+            String category = (String) categoryBox.getSelectedItem();
+            double spent = spentThisWeek(category);
+            double limit = limits.get(category);
+            budgetNote.setText(category + " this week: " + Theme.money(spent) + " of " + Theme.money(limit));
             budgetNote.setForeground(spent >= limit ? Theme.RED : Theme.MUTED);
         };
-        category.addActionListener(e -> updateNote.run());
+        categoryBox.addActionListener(e -> updateNote.run());
         updateNote.run();
 
-        d.onConfirm(() -> {
-            double a = d.readAmount(amount);
-            if (a <= 0) return;
-            if (a > walletBalance) {
-                d.setError("Not enough in your wallet. Available: " + Theme.money(walletBalance));
+        dialog.onConfirm(() -> {
+            double amount = dialog.readAmount(amountField);
+            if (amount <= 0) return;
+            if (amount > walletBalance) {
+                dialog.setError("Not enough in your wallet. Available: " + Theme.money(walletBalance));
                 return;
             }
 
-            LocalDate today = appToday();
-            String c = (String) category.getSelectedItem();
-            List<String> over = new ArrayList<>();
-            if (settings.getDailyLimit() > 0 && spentOn(today) + a > settings.getDailyLimit()) {
-                over.add("your daily limit (" + Theme.money(settings.getDailyLimit()) + ")");
-            }
-            if (settings.getWeeklyLimit() > 0 && spentThisWeek() + a > settings.getWeeklyLimit()) {
-                over.add("your weekly limit (" + Theme.money(settings.getWeeklyLimit()) + ")");
-            }
-            if (spentThisWeek(c) + a > limits.get(c)) {
-                over.add("your " + c + " budget (" + Theme.money(limits.get(c)) + ")");
-            }
-            if (!over.isEmpty()) {
-                StringBuilder message = new StringBuilder("This expense takes you over:\n\n");
-                for (String item : over) message.append("  \u2022 ").append(item).append('\n');
-                message.append("\nRecord it anyway?");
-                int choice = JOptionPane.showConfirmDialog(d, message.toString(), "Over your limit",
-                        JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-                if (choice != JOptionPane.YES_OPTION) return;
-            }
+            String category = (String) categoryBox.getSelectedItem();
+            List<String> over = limitsExceeded(category, amount);
+            if (!over.isEmpty() && !confirmOverLimit(dialog, over)) return;
 
-            String text = description.getText().trim().isEmpty() ? "Expense" : description.getText().trim();
-            saveTransaction(d, new TransactionRecord(today.toString(), MONEY_OUT, c, text, -a),
-                    walletBalance - a, savingsBalance);
+            String description = descriptionField.getText().trim();
+            if (description.isEmpty()) description = "Expense";
+            TransactionRecord record = new TransactionRecord(today(), MONEY_OUT, category,
+                    description, -amount);
+            saveTransaction(dialog, record, walletBalance - amount, savingsBalance);
         });
-        d.open();
+        dialog.open();
+    }
+
+    /** Which limits (daily, weekly, category) a new expense would go over. */
+    private List<String> limitsExceeded(String category, double amount) {
+        List<String> over = new ArrayList<>();
+        double dailyLimit = settings.getDailyLimit();
+        double weeklyLimit = settings.getWeeklyLimit();
+        double categoryLimit = settings.getCategoryLimits().get(category);
+
+        if (dailyLimit > 0 && spentOn(today()) + amount > dailyLimit) {
+            over.add("your daily limit (" + Theme.money(dailyLimit) + ")");
+        }
+        if (weeklyLimit > 0 && spentThisWeek() + amount > weeklyLimit) {
+            over.add("your weekly limit (" + Theme.money(weeklyLimit) + ")");
+        }
+        if (spentThisWeek(category) + amount > categoryLimit) {
+            over.add("your " + category + " budget (" + Theme.money(categoryLimit) + ")");
+        }
+        return over;
+    }
+
+    private static boolean confirmOverLimit(Component parent, List<String> over) {
+        StringBuilder message = new StringBuilder("This expense takes you over:\n\n");
+        for (String item : over) message.append("  • ").append(item).append('\n');
+        message.append("\nRecord it anyway?");
+        int choice = JOptionPane.showConfirmDialog(parent, message.toString(), "Over your limit",
+                JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        return choice == JOptionPane.YES_OPTION;
     }
 
     private void fundsDialog() {
-        FormDialog d = new FormDialog("Add money", "Add your allowance or other money you received.", "Add money");
-        JTextField amount = Theme.field();
-        JComboBox<String> source = new JComboBox<>(new String[]{ALLOWANCE, OTHER_FUNDS});
-        Theme.styleCombo(source);
+        FormDialog dialog = new FormDialog(this, "Add money", "Add your allowance or other money you received.",
+                "Add money");
+        JTextField amountField = Theme.field();
+        JComboBox<String> sourceBox = new JComboBox<>(new String[]{ALLOWANCE, OTHER_FUNDS});
+        Theme.styleCombo(sourceBox);
         JLabel note = Theme.text(" ", Theme.SMALL, Theme.MUTED);
 
-        d.addRow("Amount (\u20B1)", amount);
-        d.addRow("Source", source);
-        d.addNote(note);
+        dialog.addRow("Amount (₱)", amountField);
+        dialog.addRow("Source", sourceBox);
+        dialog.addNote(note);
 
         String frequency = settings.getAllowanceFrequency();
         String period = periodWord(frequency);
 
         Runnable updateNote = () -> {
-            if (!ALLOWANCE.equals(source.getSelectedItem())) {
+            if (!ALLOWANCE.equals(sourceBox.getSelectedItem())) {
                 note.setText("Other funds don't count toward your allowance.");
                 return;
             }
@@ -1412,42 +1275,43 @@ public class MainApp extends JFrame {
                 double received = allowanceReceived(frequency);
                 note.setText("Allowance received " + period + ": " + Theme.money(received)
                         + " of " + Theme.money(settings.getAllowanceAmount()));
-            } catch (Exception ex) {
+            } catch (Exception e) {
                 note.setText("Couldn't load your allowance status.");
             }
         };
-        source.addActionListener(e -> updateNote.run());
+        sourceBox.addActionListener(e -> updateNote.run());
         updateNote.run();
 
-        d.onConfirm(() -> {
-            double a = d.readAmount(amount);
-            if (a <= 0) return;
+        dialog.onConfirm(() -> {
+            double amount = dialog.readAmount(amountField);
+            if (amount <= 0) return;
 
-            String selected = (String) source.getSelectedItem();
-            if (ALLOWANCE.equals(selected)) {
+            // Allowance can't go over the amount set in the budget plan for this period.
+            String source = (String) sourceBox.getSelectedItem();
+            if (ALLOWANCE.equals(source)) {
                 try {
                     double remaining = settings.getAllowanceAmount() - allowanceReceived(frequency);
-                    if (a > remaining + 0.005) {
-                        d.setError("That's more than your allowance. You can add up to "
+                    if (amount > remaining + 0.005) { // allow for rounding
+                        dialog.setError("That's more than your allowance. You can add up to "
                                 + Theme.money(Math.max(0, remaining)) + " " + period + ".");
                         return;
                     }
-                } catch (Exception ex) {
-                    d.setError("Couldn't check your allowance: " + ex.getMessage());
+                } catch (Exception e) {
+                    dialog.setError("Couldn't check your allowance: " + e.getMessage());
                     return;
                 }
             }
-            TransactionRecord record = new TransactionRecord(
-                    appToday().toString(), MONEY_IN, selected, "Added " + selected, a);
-            saveTransaction(d, record, walletBalance + a, savingsBalance);
+            TransactionRecord record = new TransactionRecord(today(), MONEY_IN, source,
+                    "Added " + source, amount);
+            saveTransaction(dialog, record, walletBalance + amount, savingsBalance);
         });
-        d.open();
+        dialog.open();
     }
 
     private double allowanceReceived(String frequency) throws Exception {
-        LocalDate now = appToday();
+        LocalDate today = today();
         return MoniDatabase.getAllowanceReceived(currentUser,
-                MoniDatabase.periodStart(now, frequency), MoniDatabase.periodEnd(now, frequency));
+                MoniDatabase.periodStart(today, frequency), MoniDatabase.periodEnd(today, frequency));
     }
 
     private static String periodWord(String frequency) {
@@ -1456,95 +1320,86 @@ public class MainApp extends JFrame {
         return "today";
     }
 
-    /** Moves wallet money into savings. */
     private void savingsDialog() {
-        FormDialog d = new FormDialog("Move to savings", "Move money from your wallet into savings.",
+        FormDialog dialog = new FormDialog(this, "Move to savings", "Move money from your wallet into savings.",
                 "Move to savings");
-        JTextField amount = Theme.field();
-        JTextField note = Theme.field();
+        JTextField amountField = Theme.field();
+        JTextField noteField = Theme.field();
 
-        d.addRow("Amount (\u20B1)", amount);
-        d.addRow("Note (optional)", note);
-        d.addNote(Theme.text("Wallet balance: " + Theme.money(walletBalance), Theme.SMALL, Theme.MUTED));
+        dialog.addRow("Amount (₱)", amountField);
+        dialog.addRow("Note (optional)", noteField);
+        dialog.addNote(Theme.text("Wallet balance: " + Theme.money(walletBalance), Theme.SMALL, Theme.MUTED));
 
-        d.onConfirm(() -> {
-            double a = d.readAmount(amount);
-            if (a <= 0) return;
-            if (a > walletBalance) {
-                d.setError("Not enough in your wallet. Available: " + Theme.money(walletBalance));
+        dialog.onConfirm(() -> {
+            double amount = dialog.readAmount(amountField);
+            if (amount <= 0) return;
+            if (amount > walletBalance) {
+                dialog.setError("Not enough in your wallet. Available: " + Theme.money(walletBalance));
                 return;
             }
-            String description = note.getText().trim().isEmpty() ? "Moved to savings" : note.getText().trim();
-            TransactionRecord record = new TransactionRecord(
-                    appToday().toString(), MONEY_OUT, SAVINGS, description, -a);
-            saveTransaction(d, record, walletBalance - a, savingsBalance + a);
+            String description = noteField.getText().trim();
+            if (description.isEmpty()) description = "Moved to savings";
+            TransactionRecord record = new TransactionRecord(today(), MONEY_OUT, SAVINGS,
+                    description, -amount);
+            saveTransaction(dialog, record, walletBalance - amount, savingsBalance + amount);
         });
-        d.open();
+        dialog.open();
     }
 
-    private void saveTransaction(FormDialog d, TransactionRecord record, double newWallet, double newSavings) {
+    /** Saves the transaction and the new balances together, then closes the dialog. */
+    private void saveTransaction(FormDialog dialog, TransactionRecord record, double newWallet, double newSavings) {
         try {
             MoniDatabase.saveTransactionAndBalances(currentUser, record, newWallet, newSavings);
-            d.dispose();
-            refreshDashboard();
+            dialog.dispose();
+            reloadData();
         } catch (Exception e) {
-            e.printStackTrace();
-            d.setError("Could not save: " + e.getMessage());
+            System.err.println("Could not save transaction: " + e);
+            dialog.setError("Could not save: " + e.getMessage());
         }
     }
 
+    // =====================================================================
+    // Other windows: weekly summary, guide, date, plan, log out
+    // =====================================================================
+
     private void showWeeklySummary() {
-        LocalDate today = appToday();
-        JDialog d = new JDialog(this, "This week's summary", true);
+        JDialog dialog = new JDialog(this, "This week's summary", true);
 
-        JPanel root = new JPanel(new BorderLayout(0, 16));
-        root.setBackground(Theme.BG);
-        root.setBorder(new EmptyBorder(22, 24, 20, 24));
-
-        JPanel head = new JPanel();
-        head.setOpaque(false);
-        head.setLayout(new BoxLayout(head, BoxLayout.Y_AXIS));
+        JPanel head = verticalPanel();
         Theme.stack(head, 0, Theme.text("This week's summary", Theme.H1, Theme.TEXT));
-        Theme.stack(head, 4, Theme.text(weekRange(today), Theme.BODY, Theme.MUTED));
+        Theme.stack(head, 4, Theme.text(weekRange(today()), Theme.BODY, Theme.MUTED));
 
-        DefaultTableModel model = TransactionsPanel.newModel();
-        for (TransactionRecord r : weekTransactions) {
-            model.addRow(new Object[]{LocalDate.parse(r.getDate()), r.getFlowType(), r.getCategorySource(),
-                    Objects.toString(r.getDescription(), ""), r.getAmount()});
-        }
         double[] totals = weekTotals();
-
-        JPanel stats = clear(new GridLayout(1, 3, 12, 0));
+        JPanel stats = transparentPanel(new GridLayout(1, 3, 12, 0));
         stats.add(miniStat("Money in", Theme.peso(totals[0]), Theme.GREEN));
         stats.add(miniStat("Money out", Theme.peso(totals[1]), Theme.RED));
         stats.add(miniStat("Net", Theme.signedPeso(totals[0] - totals[1]), Theme.TEXT));
 
-        JPanel north = clear(new BorderLayout(0, 16));
+        JPanel north = transparentPanel(new BorderLayout(0, 16));
         north.add(head, BorderLayout.NORTH);
         north.add(stats, BorderLayout.CENTER);
 
+        DefaultTableModel model = TransactionsPanel.newModel();
+        for (TransactionRecord r : weekTransactions) TransactionsPanel.addRow(model, r);
         Component center;
         if (model.getRowCount() > 0) {
             JTable table = TransactionsPanel.createTable(model);
             table.setRowSorter(new TableRowSorter<>(model)); // click a header to sort
-            Theme.RoundedPanel box = Theme.tableBox(table);
-            center = box;
+            center = Theme.tableBox(table);
         } else {
             center = Theme.text("No transactions this week yet.", Theme.BODY, Theme.MUTED);
         }
 
-        JPanel south = clear(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-        south.add(button("Close", Theme.ButtonKind.PRIMARY, d::dispose));
+        JPanel south = transparentPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        south.add(button("Close", Theme.ButtonKind.PRIMARY, dialog::dispose));
 
+        JPanel root = new JPanel(new BorderLayout(0, 16));
+        root.setBackground(Theme.BG);
+        root.setBorder(new EmptyBorder(22, 24, 20, 24));
         root.add(north, BorderLayout.NORTH);
         root.add(center, BorderLayout.CENTER);
         root.add(south, BorderLayout.SOUTH);
-
-        d.setContentPane(root);
-        d.setSize(900, 600);
-        d.setLocationRelativeTo(this);
-        Theme.onEscape(d, d::dispose);
-        d.setVisible(true);
+        showDialog(dialog, root, 900, 600);
     }
 
     private static JPanel miniStat(String title, String value, Color color) {
@@ -1558,7 +1413,7 @@ public class MainApp extends JFrame {
 
     /** Plain-language guide to the app and to every number on the dashboard. */
     private void showHowItWorks() {
-        JDialog d = new JDialog(this, "How Moni works", true);
+        JDialog dialog = new JDialog(this, "How Moni works", true);
 
         Theme.Column col = new Theme.Column();
         col.setBorder(new EmptyBorder(0, 0, 8, 8));
@@ -1589,87 +1444,78 @@ public class MainApp extends JFrame {
             col.addRow(new Theme.WrapText(term[1], Theme.BODY, Theme.MUTED), 2);
         }
 
+        JPanel south = transparentPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        south.add(button("Got it", Theme.ButtonKind.PRIMARY, dialog::dispose));
+
         JPanel root = new JPanel(new BorderLayout(0, 16));
         root.setBackground(Theme.CARD);
         root.setBorder(new EmptyBorder(24, 28, 20, 20));
         root.add(Theme.scroll(col), BorderLayout.CENTER);
-
-        JPanel south = clear(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        south.add(button("Got it", Theme.ButtonKind.PRIMARY, d::dispose));
         root.add(south, BorderLayout.SOUTH);
+        showDialog(dialog, root, 600, 660);
+    }
 
-        d.setContentPane(root);
-        d.setSize(600, 660);
-        d.setLocationRelativeTo(this);
-        Theme.onEscape(d, d::dispose);
-        d.setVisible(true);
+    private void showDialog(JDialog dialog, JComponent content, int width, int height) {
+        dialog.setContentPane(content);
+        dialog.setSize(width, height);
+        dialog.setLocationRelativeTo(this);
+        Theme.onEscape(dialog, dialog::dispose);
+        dialog.setVisible(true);
     }
 
     /**
-     * Changes the date used by Moni for the presentation/demo.
-     * This does not change the computer date or alter existing database dates.
-     * It only changes the date Moni treats as "today" while the app is running.
+     * Lets the user pick which day Moni treats as today. Only the app's view changes:
+     * the computer's clock and the dates already saved in the database stay the same.
      */
-    private void changePresentationDate() {
-        JSpinner dateSpinner = new JSpinner(
-                new SpinnerDateModel(
-                        java.sql.Date.valueOf(presentationDate),
-                        java.sql.Date.valueOf(LocalDate.of(2020, 1, 1)),
-                        java.sql.Date.valueOf(LocalDate.of(2099, 12, 31)),
-                        java.util.Calendar.DAY_OF_MONTH
-                )
-        );
+    private void changeDate() {
+        LocalDate realToday = LocalDate.now();
+        JSpinner dateSpinner = new JSpinner(new SpinnerDateModel(
+                java.sql.Date.valueOf(selectedDate),
+                java.sql.Date.valueOf(LocalDate.of(2020, 1, 1)),
+                java.sql.Date.valueOf(LocalDate.of(2099, 12, 31)),
+                Calendar.DAY_OF_MONTH));
         dateSpinner.setEditor(new JSpinner.DateEditor(dateSpinner, "MMM d, yyyy"));
         dateSpinner.setPreferredSize(new Dimension(150, 32));
 
-        JPanel panel = new JPanel(new BorderLayout(0, 12));
-        panel.setBorder(new EmptyBorder(8, 4, 4, 4));
-        panel.add(Theme.text(
-                "Choose the date Moni should use as \"today\" for this presentation.",
-                Theme.BODY,
-                Theme.TEXT
-        ), BorderLayout.NORTH);
-        panel.add(dateSpinner, BorderLayout.CENTER);
-
-        JCheckBox reset = new JCheckBox("Reset to default demo date (Sep 24, 2026)");
+        JCheckBox reset = new JCheckBox("Go back to today (" + realToday.format(LONG_DATE) + ")");
         reset.setOpaque(false);
         reset.setFont(Theme.BODY);
         reset.addActionListener(e -> {
-            if (reset.isSelected()) {
-                dateSpinner.setValue(java.sql.Date.valueOf(DEFAULT_DEMO_DATE));
-            }
+            if (reset.isSelected()) dateSpinner.setValue(java.sql.Date.valueOf(realToday));
         });
+
+        JPanel panel = new JPanel(new BorderLayout(0, 12));
+        panel.setBorder(new EmptyBorder(8, 4, 4, 4));
+        panel.add(Theme.text("Choose the date Moni should use as \"today\".", Theme.BODY, Theme.TEXT),
+                BorderLayout.NORTH);
+        panel.add(dateSpinner, BorderLayout.CENTER);
         panel.add(reset, BorderLayout.SOUTH);
 
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                panel,
-                "Presentation Date",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
-
+        int result = JOptionPane.showConfirmDialog(this, panel, "Change date",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (result != JOptionPane.OK_OPTION) return;
 
-        java.util.Date selected = (java.util.Date) dateSpinner.getValue();
-        presentationDate = selected.toInstant()
-                .atZone(java.time.ZoneId.systemDefault())
-                .toLocalDate();
+        java.util.Date picked = (java.util.Date) dateSpinner.getValue();
+        selectedDate = picked.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+        rebuild(); // every page shows date-based numbers, so build them all again
+    }
 
-        // Rebuild so every date-dependent section updates immediately.
+    /** Every component reads its colours when it is built, so switching modes rebuilds the window. */
+    private void toggleDarkMode() {
+        Theme.setDarkMode(!Theme.isDarkMode());
         rebuild();
     }
 
     private void customizeDashboard() {
-        OnboardingDialog d = new OnboardingDialog(this, currentUser, settings);
-        d.setVisible(true);
-        UserSettings updated = d.getResult();
+        OnboardingDialog dialog = new OnboardingDialog(this, currentUser, settings);
+        dialog.setVisible(true);
+        UserSettings updated = dialog.getResult();
         if (updated == null) return;
 
         try {
             MoniDatabase.saveSettings(currentUser, updated);
             settings = updated;
-            rebuild(); // sections may have been shown/hidden, so rebuild the layout
+            rebuild(); // sections may have been shown or hidden
         } catch (Exception e) {
             showError(this, "Could not save your changes.", e);
         }
@@ -1684,13 +1530,90 @@ public class MainApp extends JFrame {
     }
 
     // =====================================================================
-    // Helpers
+    // Small helpers
     // =====================================================================
+
+    private static JPanel transparentPanel(LayoutManager layout) {
+        JPanel panel = new JPanel(layout);
+        panel.setOpaque(false);
+        return panel;
+    }
+
+    /** Transparent panel that stacks its children top to bottom (use with Theme.stack). */
+    private static JPanel verticalPanel() {
+        JPanel panel = new JPanel();
+        panel.setOpaque(false);
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        return panel;
+    }
+
+    /** Wraps a component so its preferred width is fixed; GridBag then splits the rest by weight. */
+    private static JPanel withWidth(JComponent c, int width) {
+        JPanel panel = new JPanel(new BorderLayout()) {
+            @Override public Dimension getPreferredSize() {
+                return new Dimension(width, super.getPreferredSize().height);
+            }
+
+            @Override public Dimension getMinimumSize() {
+                return new Dimension(width * 2 / 3, super.getMinimumSize().height);
+            }
+        };
+        panel.setOpaque(false);
+        panel.add(c);
+        return panel;
+    }
+
+    /** Keeps a component at the top of its cell instead of stretching it. */
+    private static JPanel alignTop(JComponent c) {
+        JPanel panel = transparentPanel(new BorderLayout());
+        panel.add(c, BorderLayout.NORTH);
+        return panel;
+    }
+
+    /** Vertically centres a component in its cell. */
+    private static JPanel centred(JComponent c) {
+        JPanel panel = transparentPanel(new GridBagLayout());
+        panel.add(c);
+        return panel;
+    }
+
+    /** Stops a row from stretching taller inside a vertical BoxLayout. */
+    private static void fixHeight(JComponent row) {
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+    }
 
     private static Theme.FlatButton button(String text, Theme.ButtonKind kind, Runnable action) {
         Theme.FlatButton b = new Theme.FlatButton(text, kind);
         b.addActionListener(e -> action.run());
         return b;
+    }
+
+    /** The large buttons under the dashboard table. */
+    private static Theme.FlatButton actionButton(String text, Icons.Name icon, Theme.ButtonKind kind, Color ink,
+                                                 String tip, Runnable action) {
+        Theme.FlatButton b = button(text, kind, action);
+        b.setIcon(Icons.of(icon, 22, ink));
+        b.setIconTextGap(12);
+        b.setFont(Theme.font(Font.BOLD, 15));
+        b.setBorder(new EmptyBorder(13, 14, 13, 14));
+        b.setToolTipText(tip);
+        return b;
+    }
+
+    /** The smaller buttons in the top-right corner of a page. */
+    private static Theme.FlatButton smallAction(String text, Icons.Name icon, Theme.ButtonKind kind, Color ink,
+                                                Runnable action) {
+        Theme.FlatButton b = button(text, kind, action);
+        b.setIcon(Icons.of(icon, 18, ink));
+        b.setBorder(new EmptyBorder(11, 16, 11, 16));
+        b.setFont(Theme.font(Font.BOLD, 14));
+        return b;
+    }
+
+    private Theme.FlatButton summaryButton() {
+        Theme.FlatButton summary = button("This week's summary", Theme.ButtonKind.SECONDARY, this::showWeeklySummary);
+        summary.setIcon(Icons.of(Icons.Name.BARS, 16, Theme.TEXT));
+        return summary;
     }
 
     /** The user's categories plus the money sources, for the Category filter. */
@@ -1702,18 +1625,13 @@ public class MainApp extends JFrame {
         return list;
     }
 
-    /** Stops a row from stretching taller inside a vertical BoxLayout. */
-    private static void fixHeight(JComponent row) {
-        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
-    }
-
     private String allowanceSummary() {
         return "Allowance: " + Theme.peso(settings.getAllowanceAmount()) + " "
                 + settings.getAllowanceFrequency().toLowerCase();
     }
 
     private static String weekRange(LocalDate date) {
-        return MoniDatabase.weekStart(date).format(RANGE_DATE) + " \u2013 " + MoniDatabase.weekEnd(date).format(RANGE_DATE);
+        return MoniDatabase.weekStart(date).format(RANGE_DATE) + " – " + MoniDatabase.weekEnd(date).format(RANGE_DATE);
     }
 
     private static String firstName(String fullName) {
@@ -1726,113 +1644,14 @@ public class MainApp extends JFrame {
         return "there".equals(first) ? "?" : first.substring(0, 1).toUpperCase();
     }
 
+    /** Shows a database (or other) error to the user and prints the details for debugging. */
     private static void showError(Component parent, String message, Exception e) {
         e.printStackTrace();
         JOptionPane.showMessageDialog(parent, message + "\n\n" + e.getMessage(), "Moni", JOptionPane.ERROR_MESSAGE);
     }
 
-    /** Small modal form used by the quick actions. Errors show inline instead of in pop-ups. */
-    private final class FormDialog extends JDialog {
-        private final JPanel form = new JPanel(new GridBagLayout());
-        private final JLabel error = Theme.text(" ", Theme.SMALL, Theme.RED);
-        private final Theme.FlatButton confirm;
-        private int row;
-
-        FormDialog(String title, String subtitle, String confirmText) {
-            super(MainApp.this, title, true);
-
-            JPanel root = new JPanel(new BorderLayout(0, 16));
-            root.setBackground(Theme.CARD);
-            root.setBorder(new EmptyBorder(22, 24, 18, 24));
-
-            JPanel head = new JPanel();
-            head.setOpaque(false);
-            head.setLayout(new BoxLayout(head, BoxLayout.Y_AXIS));
-            Theme.stack(head, 0, Theme.text(title, Theme.font(Font.BOLD, 20), Theme.TEXT));
-            Theme.stack(head, 4, Theme.text(subtitle, Theme.BODY, Theme.MUTED));
-
-            form.setOpaque(false);
-            JPanel center = clear(new BorderLayout(0, 6));
-            center.add(form, BorderLayout.CENTER);
-            center.add(error, BorderLayout.SOUTH);
-
-            confirm = new Theme.FlatButton(confirmText, Theme.ButtonKind.PRIMARY);
-            Theme.FlatButton cancel = new Theme.FlatButton("Cancel", Theme.ButtonKind.SECONDARY);
-            cancel.addActionListener(e -> dispose());
-            JPanel buttons = clear(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-            buttons.add(cancel);
-            buttons.add(confirm);
-
-            root.add(head, BorderLayout.NORTH);
-            root.add(center, BorderLayout.CENTER);
-            root.add(buttons, BorderLayout.SOUTH);
-            setContentPane(root);
-
-            getRootPane().setDefaultButton(confirm); // Enter submits
-            Theme.onEscape(this, this::dispose);    // Esc cancels
-        }
-
-        void addRow(String label, JComponent field) {
-            GridBagConstraints l = new GridBagConstraints();
-            l.gridx = 0;
-            l.gridy = row;
-            l.anchor = GridBagConstraints.WEST;
-            l.insets = new Insets(6, 0, 6, 16);
-            form.add(Theme.text(label, Theme.BODY_BOLD, Theme.TEXT), l);
-
-            GridBagConstraints f = new GridBagConstraints();
-            f.gridx = 1;
-            f.gridy = row++;
-            f.weightx = 1;
-            f.fill = GridBagConstraints.HORIZONTAL;
-            f.insets = new Insets(6, 0, 6, 0);
-            form.add(field, f);
-        }
-
-        void addNote(JLabel note) {
-            GridBagConstraints c = new GridBagConstraints();
-            c.gridx = 1;
-            c.gridy = row++;
-            c.anchor = GridBagConstraints.WEST;
-            c.insets = new Insets(0, 0, 6, 0);
-            form.add(note, c);
-        }
-
-        void onConfirm(Runnable action) {
-            confirm.addActionListener(e -> {
-                setError(" ");
-                action.run();
-            });
-        }
-
-        void setError(String message) {
-            error.setText(message);
-        }
-
-        /** Returns the amount rounded to centavos, or -1 (and shows an error) if it isn't valid. */
-        double readAmount(JTextField field) {
-            try {
-                double value = Math.round(Theme.parseAmount(field.getText()) * 100) / 100.0;
-                if (value > 0) return value;
-            } catch (NumberFormatException ignored) {
-                // handled below
-            }
-            setError("Enter an amount greater than zero, e.g. 150 or 150.50.");
-            field.requestFocusInWindow();
-            return -1;
-        }
-
-        void open() {
-            pack();
-            setSize(Math.max(480, getWidth()), getHeight());
-            setResizable(false);
-            setLocationRelativeTo(MainApp.this);
-            setVisible(true);
-        }
-    }
-
     // =====================================================================
-    // Launch
+    // Starting the app
     // =====================================================================
 
     public static void main(String[] args) {
@@ -1841,12 +1660,13 @@ public class MainApp extends JFrame {
             try {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             } catch (Exception ignored) {
-                // The default look-and-feel is fine.
+                // Fall back to the default look and feel.
             }
             showLogin();
         });
     }
 
+    /** Shows the sign-in window until someone signs in (and finishes setup) or closes it. */
     private static void showLogin() {
         while (true) {
             AuthDialog login = new AuthDialog(null);
@@ -1861,7 +1681,43 @@ public class MainApp extends JFrame {
                 new MainApp(user, settings).setVisible(true);
                 return;
             }
-            // Setup was not finished: show the sign-in screen again.
+            // Setup wasn't finished, so go back to the sign-in window.
         }
+    }
+
+    /**
+     * Loads the user's settings, running the setup wizard first if setup was never finished.
+     *
+     * @return the settings to open the dashboard with, or null to go back to the sign-in window
+     */
+    private static UserSettings loadOrRunSetup(User user) {
+        UserSettings loaded;
+        try {
+            loaded = MoniDatabase.loadSettings(user);
+        } catch (Exception e) {
+            showError(null, "Moni couldn't load your settings from the database.", e);
+            return null;
+        }
+        if (loaded.isSetupCompleted()) return loaded;
+
+        OnboardingDialog setup = new OnboardingDialog(null, user);
+        setup.setVisible(true);
+        UserSettings chosen = setup.getResult();
+        if (chosen == null) {
+            JOptionPane.showMessageDialog(null,
+                    "Finish the four setup steps to open your dashboard.\n"
+                            + "You can change everything later in Budget Plan.",
+                    "Setup not finished", JOptionPane.INFORMATION_MESSAGE);
+            return null;
+        }
+
+        try {
+            MoniDatabase.saveSettings(user, chosen);
+        } catch (Exception e) {
+            // Still open the dashboard with the new plan; setup will run again at the next sign-in.
+            showError(null, "Your setup could not be saved, so Moni will ask for it again "
+                    + "next time you sign in.", e);
+        }
+        return chosen;
     }
 }

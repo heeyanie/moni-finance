@@ -397,7 +397,7 @@ public class OnboardingDialog extends JDialog {
             return;
         }
 
-        double perDay = Math.round(dailyAllowance(allowance, selectedFrequency()));
+        double perDay = UserSettings.perDay(allowance, selectedFrequency());
         double dailySpending = Math.round(perDay * SPENDING_RATE);
         double dailySavings = Math.round(perDay * SAVINGS_RATE);
         double dailyBuffer = Math.round(perDay * BUFFER_RATE);
@@ -416,10 +416,9 @@ public class OnboardingDialog extends JDialog {
     private void applySuggestedLimits() {
         double allowance = Theme.parseAmount(allowanceField, 0);
         if (allowance <= 0) return;
-        
-        double perDay = Math.round(dailyAllowance(allowance, selectedFrequency()));
+
+        double perDay = UserSettings.perDay(allowance, selectedFrequency());
         double spending = Math.round(perDay * SPENDING_RATE);
-        
         setQuietly(dailyLimitField, Theme.plain(spending));
         setQuietly(weeklyLimitField, Theme.plain(spending * 7));
         limitsEdited = false;
@@ -433,12 +432,6 @@ public class OnboardingDialog extends JDialog {
             }
         }
         updateCategoryTotal();
-    }
-
-    private static double dailyAllowance(double amount, String frequency) {
-        if ("Weekly".equalsIgnoreCase(frequency)) return amount / 7.0;
-        if ("Monthly".equalsIgnoreCase(frequency)) return amount / 30.0;
-        return amount;
     }
 
     private String selectedFrequency() {
@@ -503,12 +496,8 @@ public class OnboardingDialog extends JDialog {
 
     private UserSettings collectSettings() {
         UserSettings s = new UserSettings();
-        double allowance = Theme.parseAmount(allowanceField, 0);
-        String frequency = selectedFrequency();
-
-        s.setAllowanceAmount(allowance);
-        s.setAllowanceFrequency(frequency);
-        s.setDailyAllowance(Math.round(dailyAllowance(allowance, frequency)));
+        s.setAllowanceAmount(Theme.parseAmount(allowanceField, 0));
+        s.setAllowanceFrequency(selectedFrequency());
         s.setDailyLimit(Theme.parseAmount(dailyLimitField, 0));
         s.setWeeklyLimit(Theme.parseAmount(weeklyLimitField, 0));
 
@@ -575,4 +564,4 @@ public class OnboardingDialog extends JDialog {
     private static int percent(double rate) {
         return (int) Math.round(rate * 100);
     }
-}
+}

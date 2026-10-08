@@ -71,22 +71,22 @@ public class AuthDialog extends JDialog {
         JPanel brand = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         brand.setOpaque(false);
         brand.add(Theme.logo(40));
-        JLabel name = Theme.text("MONI", Theme.font(Font.BOLD, 34), Color.WHITE);
+        JLabel name = Theme.text("MONI", Theme.font(Font.BOLD, 34), Theme.ON_INK);
         name.setBorder(new EmptyBorder(0, 12, 0, 0));
         brand.add(name);
         fixHeight(brand);
         Theme.stack(panel, 0, brand);
 
         Theme.stack(panel, 16, new Theme.WrapText("Know how much you can spend today, so your allowance "
-                + "lasts until the next one arrives.", Theme.font(Font.PLAIN, 15), Color.WHITE));
+                + "lasts until the next one arrives.", Theme.font(Font.PLAIN, 15), Theme.ON_INK));
 
         Theme.stack(panel, 32, Theme.text("How it works", Theme.LABEL, Theme.ON_INK_MUTED));
         String[] steps = {"Add your allowance", "Record what you spend", "See what's left for today"};
         for (int i = 0; i < steps.length; i++) {
             JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
             row.setOpaque(false);
-            row.add(new Theme.Badge(String.valueOf(i + 1), 24, Theme.SAGE, Theme.TEXT));
-            JLabel step = Theme.text(steps[i], Theme.BODY_BOLD, Color.WHITE);
+            row.add(new Theme.Badge(String.valueOf(i + 1), 24, Theme.CREAM, Theme.OLIVE));
+            JLabel step = Theme.text(steps[i], Theme.BODY_BOLD, Theme.ON_INK);
             step.setBorder(new EmptyBorder(0, 12, 0, 0));
             row.add(step);
             fixHeight(row);
@@ -222,4 +222,4 @@ public class AuthDialog extends JDialog {
         loginError.setText(" ");
         loginPassword.requestFocusInWindow();
     }
-}
+}
