@@ -18,7 +18,7 @@ final class Icons {
         HOME, LIST, PIE, PIGGY, BARS, GEAR,
         // cards and buttons (outline)
         WALLET, PIGGY_LINE, SWAP, RECEIPT, SEARCH, CALENDAR, BELL, PLUS, CASH, COINS,
-        CHEVRON_DOWN, CHEVRON_LEFT, CHEVRON_RIGHT, INFO, SLIDERS, LOGOUT,
+        CHEVRON_DOWN, CHEVRON_LEFT, CHEVRON_RIGHT, INFO, SLIDERS, LOGOUT, SUN, MOON,
         // spending categories
         UTENSILS, BUS, CAP, GAMEPAD, BAG, BOLT, HEART, TAG,
         // decoration
@@ -233,6 +233,20 @@ final class Icons {
                     g.draw(new Line2D.Double(9.5, 12, 20, 12));
                     g.draw(path(false, 16, 8, 20, 12, 16, 16));
                     break;
+                case SUN:
+                    g.draw(circle(12, 12, 4.2));
+                    for (int k = 0; k < 8; k++) {
+                        Shape ray = new Line2D.Double(12, 2.6, 12, 4.6);
+                        g.draw(AffineTransform.getRotateInstance(Math.toRadians(45 * k), 12, 12)
+                                .createTransformedShape(ray));
+                    }
+                    break;
+                case MOON: {
+                    Area moon = new Area(circle(11.5, 12.5, 8.5));
+                    moon.subtract(new Area(circle(16.5, 7.5, 7)));
+                    g.draw(moon);
+                    break;
+                }
                 case UTENSILS: {
                     g.draw(path(false, 4.3, 3, 4.3, 8.2));
                     g.draw(path(false, 9.3, 3, 9.3, 8.2));
@@ -378,4 +392,4 @@ final class Icons {
             return p;
         }
     }
-}
+}

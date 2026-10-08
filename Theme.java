@@ -26,6 +26,7 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.prefs.Preferences;
 
 /**
  * Shared colours, fonts, formatting and small custom components used by every Moni window.
@@ -36,46 +37,53 @@ import java.util.Set;
 final class Theme {
     private Theme() {}
 
-    // ---------------------------------------------------------------- palette
-    // The five colours from the "Dusty Rose & Lavender" palette.
-    static final Color ROSE = new Color(0xC4, 0x96, 0xA1);      // Dusty Rose      #C496A1
-    static final Color SAGE = new Color(0x91, 0x9D, 0x85);      // Muted Sage      #919D85
-    static final Color LAVENDER = new Color(0x8E, 0x88, 0xA3);  // Lavender Purple #8E88A3
-    static final Color CREAM = new Color(0xEB, 0xE1, 0xC6);     // Vintage Cream   #EBE1C6
-    static final Color BRONZE = new Color(0x81, 0x78, 0x5A);    // Antique Bronze  #81785A
+    // ---------------------------------------------------------------- colours
+    // Moni's palette is olive green and beige cream. Every other colour below is a shade of one
+    // of those two, apart from green / amber / red for money in, warnings and money out.
+    //
+    // The fields aren't final because dark mode swaps them (see setDarkMode). Components read
+    // them when they are built, so after switching modes the window has to be built again.
 
-    // Where each colour is used. Page and card colours come from the dashboard design.
-    static final Color BG = new Color(0xF8, 0xF7, 0xFA);            // page background
-    static final Color CARD = Color.WHITE;                           // cards, fields, top bar
-    static final Color TEXT = new Color(0x1F, 0x1D, 0x2B);          // main text
-    static final Color TEXT_SOFT = new Color(0x3E, 0x3B, 0x4A);     // captions on tinted cards
-    static final Color MUTED = new Color(0x6E, 0x6B, 0x7B);         // secondary text
-    static final Color BORDER = new Color(0xE4, 0xE2, 0xEA);        // field outlines
-    static final Color CARD_OUTLINE = new Color(0xEC, 0xEA, 0xF0);  // white card outlines
-    static final Color LINE = new Color(0xF0, 0xEF, 0xF4);          // table row separators
-    static final Color ACCENT = new Color(0x5E, 0x57, 0x81);        // primary buttons
-    static final Color ACCENT_HOVER = new Color(0x53, 0x4D, 0x74);
-    static final Color ACCENT_PRESSED = new Color(0x47, 0x41, 0x63);
-    static final Color ACCENT_SOFT = new Color(0xF0, 0xEF, 0xFA);   // pale lavender (table header)
-    static final Color ACCENT_MID = new Color(0x95, 0x90, 0xB4);    // current page in the pager
-    static final Color INK = new Color(0x55, 0x4E, 0x74);           // sidebar and login panel
-    static final Color INK_DEEP = new Color(0x4C, 0x46, 0x69);      // bottom of the sidebar gradient
-    static final Color NAV_SELECTED = new Color(0x97, 0x90, 0xC5);  // selected sidebar item
-    static final Color TIP_CARD = new Color(0x63, 0x5B, 0x83);      // card at the bottom of the sidebar
-    static final Color ON_INK_MUTED = new Color(214, 209, 228);
-    static final Color LEAF = new Color(0xE8, 0xD3, 0xAE);          // cream leaves on the sidebar card
-    static final Color GREEN = new Color(0x2F, 0x7D, 0x46);         // money in
-    static final Color GREEN_SOFT = new Color(0xE6, 0xF4, 0xEA);
-    static final Color AMBER = new Color(0xB7, 0x79, 0x1F);         // near a limit
-    static final Color RED = new Color(0xD0, 0x28, 0x4F);           // money out / over a limit
-    static final Color RED_SOFT = new Color(0xFC, 0xE3, 0xE8);
-    static final Color ALERT = new Color(0xE8, 0x25, 0x30);         // notification dot
-    static final Color TRACK = new Color(0xE9, 0xE7, 0xEE);         // empty part of progress bars
-    static final Color SOFT_BUTTON = new Color(0xF9, 0xF4, 0xEE);   // cream secondary buttons
-    static final Color SOFT_BUTTON_LINE = new Color(0xEE, 0xE5, 0xD9);
-    static final Color CHIP = new Color(0xF4, 0xF3, 0xF7);          // user chip in the top bar
+    static final Color OLIVE = new Color(0x4D694E);
+    static final Color CREAM = new Color(0xFFF3D5);
 
-    /** A family of colours for one tinted card, icon square or category tag. */
+    private static final String DARK_MODE_KEY = "darkMode";
+    private static boolean darkMode;
+
+    static Color BG;              // page background
+    static Color CARD;            // cards, fields, top bar
+    static Color TEXT;            // main text
+    static Color TEXT_SOFT;       // captions on tinted cards
+    static Color MUTED;           // secondary text
+    static Color BORDER;          // field outlines
+    static Color CARD_OUTLINE;    // card outlines
+    static Color LINE;            // table row separators
+    static Color ACCENT;          // primary buttons, links, focus outlines
+    static Color ACCENT_HOVER;
+    static Color ACCENT_PRESSED;
+    static Color ON_ACCENT;       // text and icons on a primary button
+    static Color ACCENT_SOFT;     // table header, selected rows, tips
+    static Color ACCENT_MID;      // the other days in the daily chart
+    static Color INK;             // sidebar and the sign-in panel
+    static Color INK_DEEP;        // bottom of the sidebar gradient
+    static Color ON_INK;          // text on the sidebar
+    static Color ON_INK_MUTED;
+    static Color NAV_SELECTED;    // selected sidebar item
+    static Color TIP_CARD;        // card at the bottom of the sidebar
+    static Color LEAF;            // leaves on the sidebar card
+    static Color GREEN;           // money in
+    static Color GREEN_SOFT;
+    static Color AMBER;           // near a limit
+    static Color RED;             // money out / over a limit
+    static Color RED_SOFT;
+    static Color ALERT;           // notification dot
+    static Color TRACK;           // empty part of progress bars
+    static Color SOFT_BUTTON;     // secondary quick-action buttons
+    static Color SOFT_BUTTON_LINE;
+    static Color CHIP;            // user chip in the top bar
+    static Color CHIP_HOVER;
+
+    /** A family of colours for one tinted card, icon square or category tag, all made from one ink colour. */
     static final class Tint {
         final Color fill;     // card background
         final Color outline;  // card outline
@@ -83,38 +91,184 @@ final class Theme {
         final Color ink;      // icon, bar and tag text
         final Color soft;     // tag background
 
-        Tint(int fill, int outline, int box, int ink, int soft) {
-            this.fill = new Color(fill);
-            this.outline = new Color(outline);
-            this.box = new Color(box);
-            this.ink = new Color(ink);
-            this.soft = new Color(soft);
+        private Tint(int lightInk) {
+            // Dark mode lightens the ink so it stays readable on dark cards.
+            ink = darkMode ? mix(new Color(lightInk), CREAM, 0.55) : new Color(lightInk);
+            fill = mix(ink, CARD, darkMode ? 0.10 : 0.07);
+            outline = mix(ink, CARD, 0.16);
+            box = mix(ink, CARD, 0.18);
+            soft = mix(ink, CARD, 0.14);
         }
     }
 
-    static final Tint BLUE = new Tint(0xEEF1FE, 0xE0E6FB, 0xDCE3FC, 0x2E4BB4, 0xE6EBFD);
-    static final Tint MINT = new Tint(0xEEF7F1, 0xDDEEE3, 0xD6EEDD, 0x2D6E3E, 0xE3F3E8);
-    static final Tint HONEY = new Tint(0xFDF6EC, 0xF6E8D3, 0xFBE7C4, 0xD48214, 0xFCEFD9);
-    static final Tint BLUSH = new Tint(0xFCEAEE, 0xF7D9E0, 0xF8D4DD, 0xB7294B, 0xFCE3E8);
-    static final Tint VIOLET = new Tint(0xF3EFFC, 0xE8E1F8, 0xEEE6FB, 0x6A3FC8, 0xEFEAFC);
+    // Tints for the stat cards. Earthy shades so they sit well next to olive and cream.
+    static Tint MOSS;
+    static Tint FERN;
+    static Tint OCHRE;
+    static Tint CLAY;
+    static Tint SLATE;
 
-    private static final Map<String, Tint> CATEGORY_TINTS = Map.ofEntries(
-            Map.entry("food", new Tint(0xFDEFF2, 0xF8DDE4, 0xFADFE6, 0xD9295A, 0xFDEBEF)),
-            Map.entry("transportation", new Tint(0xEEF2FE, 0xDFE6FB, 0xE6ECFD, 0x2F56D0, 0xE8EEFD)),
-            Map.entry("school", VIOLET),
-            Map.entry("entertainment", new Tint(0xEDF7F0, 0xDAEEDF, 0xDFF2E6, 0x2F8446, 0xE3F3E8)),
-            Map.entry("shopping", new Tint(0xFEF4EA, 0xF8E5D0, 0xFDEBD8, 0xD0741A, 0xFDEFE0)),
-            Map.entry("bills", new Tint(0xECF7F8, 0xD6ECEF, 0xDDF1F3, 0x1F8595, 0xE2F3F5)),
-            Map.entry("health", new Tint(0xFDEFF6, 0xF6DCE9, 0xFBE1EE, 0xC0307A, 0xFCE8F2)),
-            Map.entry("other", new Tint(0xF5F4F1, 0xE8E6E1, 0xECEAE6, 0x726B5E, 0xEFEDE8)),
-            Map.entry("allowance", new Tint(0xF1F0FD, 0xE3E1FA, 0xE5E3FB, 0x5B53C2, 0xECEBFD)),
-            Map.entry("other funds", new Tint(0xEEF5FA, 0xDAE8F2, 0xDCEBF5, 0x2F6B92, 0xE2EFF7)),
-            Map.entry("savings", MINT));
+    private static Map<String, Tint> categoryTints;
+
+    static {
+        darkMode = loadDarkModePreference();
+        applyPalette();
+    }
+
+    static boolean isDarkMode() {
+        return darkMode;
+    }
+
+    /** Switches between light and dark colours and remembers the choice for next time. */
+    static void setDarkMode(boolean dark) {
+        darkMode = dark;
+        applyPalette();
+        try {
+            Preferences.userNodeForPackage(Theme.class).putBoolean(DARK_MODE_KEY, dark);
+        } catch (SecurityException e) {
+            // The choice just won't be remembered.
+        }
+    }
+
+    private static boolean loadDarkModePreference() {
+        try {
+            return Preferences.userNodeForPackage(Theme.class).getBoolean(DARK_MODE_KEY, false);
+        } catch (SecurityException e) {
+            return false;
+        }
+    }
+
+    private static void applyPalette() {
+        if (darkMode) {
+            BG = new Color(0x171C17);
+            CARD = new Color(0x212821);
+            TEXT = new Color(0xF3EBD6);
+            TEXT_SOFT = new Color(0xD6CFBA);
+            MUTED = new Color(0xA3A796);
+            BORDER = new Color(0x3D483D);
+            CARD_OUTLINE = new Color(0x2E372E);
+            LINE = new Color(0x2B332B);
+            ACCENT = new Color(0x7E9F7F);
+            ACCENT_HOVER = new Color(0x8BAC8C);
+            ACCENT_PRESSED = new Color(0x6F906F);
+            ON_ACCENT = new Color(0x141A14);
+            ACCENT_MID = new Color(0x4F6A52);
+            INK = new Color(0x2B392C);
+            INK_DEEP = new Color(0x1E281F);
+            NAV_SELECTED = new Color(0x435844);
+            TIP_CARD = new Color(0x354636);
+            LEAF = new Color(0xCDBB8E);
+            GREEN = new Color(0x7DC08A);
+            AMBER = new Color(0xE2AA4F);
+            RED = new Color(0xEE8273);
+            ALERT = new Color(0xF0645A);
+            TRACK = new Color(0x343E34);
+            SOFT_BUTTON = new Color(0x2A322A);
+            SOFT_BUTTON_LINE = new Color(0x3A443A);
+            CHIP = new Color(0x2A322A);
+            CHIP_HOVER = new Color(0x343D34);
+        } else {
+            BG = CREAM;
+            CARD = new Color(0xFFFDF8);
+            TEXT = new Color(0x263226);
+            TEXT_SOFT = new Color(0x3D4A3D);
+            MUTED = new Color(0x6B7566);
+            BORDER = new Color(0xDAD3BE);
+            CARD_OUTLINE = new Color(0xEDE3C8);
+            LINE = new Color(0xF1EBDA);
+            ACCENT = OLIVE;
+            ACCENT_HOVER = new Color(0x435C44);
+            ACCENT_PRESSED = new Color(0x394F3A);
+            ON_ACCENT = CREAM;
+            ACCENT_MID = new Color(0x9DB09D);
+            INK = OLIVE;
+            INK_DEEP = new Color(0x405841);
+            NAV_SELECTED = new Color(0x6B866C);
+            TIP_CARD = new Color(0x5A775B);
+            LEAF = new Color(0xEBDDB5);
+            GREEN = new Color(0x2F7D46);
+            AMBER = new Color(0xB7791F);
+            RED = new Color(0xB83B32);
+            ALERT = new Color(0xD93A2F);
+            TRACK = new Color(0xE9E4D4);
+            SOFT_BUTTON = new Color(0xF8EDD0);
+            SOFT_BUTTON_LINE = new Color(0xE8DBB8);
+            CHIP = new Color(0xF4F2EA);
+            CHIP_HOVER = new Color(0xEAE8DD);
+        }
+        ACCENT_SOFT = mix(ACCENT, CARD, darkMode ? 0.18 : 0.10);
+        GREEN_SOFT = mix(GREEN, CARD, 0.14);
+        RED_SOFT = mix(RED, CARD, 0.14);
+        ON_INK = CREAM;
+        ON_INK_MUTED = mix(CREAM, INK, 0.72);
+
+        MOSS = new Tint(0x4D694E);
+        FERN = new Tint(0x2F7A55);
+        OCHRE = new Tint(0xB07A1E);
+        CLAY = new Tint(0xB5543A);
+        SLATE = new Tint(0x4E6A80);
+
+        categoryTints = Map.ofEntries(
+                Map.entry("food", CLAY),
+                Map.entry("transportation", SLATE),
+                Map.entry("school", new Tint(0x7A5A8C)),
+                Map.entry("entertainment", new Tint(0x5E7D2A)),
+                Map.entry("shopping", OCHRE),
+                Map.entry("bills", new Tint(0x2F7A78)),
+                Map.entry("health", new Tint(0xA8486A)),
+                Map.entry("other", new Tint(0x7A7062)),
+                Map.entry("allowance", MOSS),
+                Map.entry("other funds", new Tint(0x4F6F7F)),
+                Map.entry("savings", FERN));
+
+        installSwingDefaults();
+    }
+
+    /**
+     * Colours for the parts Moni doesn't paint itself: message boxes, tooltips, menus and the
+     * date spinner. These only affect components created after this runs.
+     */
+    private static void installSwingDefaults() {
+        String[] backgrounds = {"Panel.background", "OptionPane.background", "CheckBox.background",
+                "PopupMenu.background", "MenuItem.background", "Viewport.background"};
+        for (String key : backgrounds) UIManager.put(key, CARD);
+        String[] foregrounds = {"Label.foreground", "OptionPane.messageForeground", "CheckBox.foreground",
+                "MenuItem.foreground", "ToolTip.foreground"};
+        for (String key : foregrounds) UIManager.put(key, TEXT);
+        UIManager.put("ToolTip.background", CARD);
+        UIManager.put("ToolTip.border", BorderFactory.createLineBorder(BORDER));
+        UIManager.put("MenuItem.selectionBackground", ACCENT_SOFT);
+        UIManager.put("MenuItem.selectionForeground", TEXT);
+        UIManager.put("Separator.foreground", LINE);
+        UIManager.put("ComboBox.selectionBackground", ACCENT_SOFT);
+        UIManager.put("ComboBox.selectionForeground", TEXT);
+        for (String field : new String[]{"TextField", "FormattedTextField", "PasswordField"}) {
+            UIManager.put(field + ".background", CARD);
+            UIManager.put(field + ".foreground", TEXT);
+            UIManager.put(field + ".caretForeground", TEXT);
+            UIManager.put(field + ".selectionBackground", ACCENT_SOFT);
+            UIManager.put(field + ".selectionForeground", TEXT);
+        }
+    }
+
+    /** Blends two colours: amount 1 gives a, 0 gives b. */
+    static Color mix(Color a, Color b, double amount) {
+        double rest = 1 - amount;
+        return new Color(
+                (int) Math.round(a.getRed() * amount + b.getRed() * rest),
+                (int) Math.round(a.getGreen() * amount + b.getGreen() * rest),
+                (int) Math.round(a.getBlue() * amount + b.getBlue() * rest));
+    }
+
+    /** The same colour with transparency, e.g. for focus rings and scroll bar thumbs. */
+    static Color withAlpha(Color c, int alpha) {
+        return new Color(c.getRed(), c.getGreen(), c.getBlue(), alpha);
+    }
 
     /** Colours for a category, so its icon, bar and tag match on every screen. */
     static Tint tintFor(String category) {
         String key = category == null ? "other" : category.trim().toLowerCase();
-        return CATEGORY_TINTS.getOrDefault(key, CATEGORY_TINTS.get("other"));
+        return categoryTints.getOrDefault(key, categoryTints.get("other"));
     }
 
     // ---------------------------------------------------------------- fonts
@@ -175,11 +329,6 @@ final class Theme {
         return (value < 0 ? "-" : "") + "\u20B1" + MONEY.format(Math.abs(value));
     }
 
-    /** Always shows a sign: "+₱500.00" or "-₱120.00". */
-    static String signedMoney(double value) {
-        return (value < 0 ? "-" : "+") + "\u20B1" + MONEY.format(Math.abs(value));
-    }
-
     /** Dashboard style: whole pesos drop the ".00" ("₱850"), but centavos are kept ("₱285.71"). */
     static String peso(double value) {
         return (value < -0.004 ? "-" : "") + "\u20B1" + amountText(Math.abs(value));
@@ -220,11 +369,6 @@ final class Theme {
         label.setFont(font);
         label.setForeground(color);
         return label;
-    }
-
-    /** Small heading such as "Wallet" (sentence case reads friendlier than ALL CAPS). */
-    static JLabel label(String value) {
-        return text(value, LABEL, MUTED);
     }
 
     /** A rounded white card with a thin outline. */
@@ -306,9 +450,14 @@ final class Theme {
         field.setBackground(CARD);
         field.setCaretColor(TEXT);
         field.setBorder(new RoundBorder(BORDER, 10, new Insets(8, 12, 8, 12)));
-        field.addFocusListener(new FocusAdapter() {
-            @Override public void focusGained(FocusEvent e) { setOutline(field, ACCENT); }
-            @Override public void focusLost(FocusEvent e) { setOutline(field, BORDER); }
+        highlightOnFocus(field);
+    }
+
+    /** Draws the rounded outline in the accent colour while the component has focus. */
+    private static void highlightOnFocus(JComponent c) {
+        c.addFocusListener(new FocusAdapter() {
+            @Override public void focusGained(FocusEvent e) { setOutline(c, ACCENT); }
+            @Override public void focusLost(FocusEvent e) { setOutline(c, BORDER); }
         });
     }
 
@@ -345,10 +494,7 @@ final class Theme {
                 return this;
             }
         });
-        combo.addFocusListener(new FocusAdapter() {
-            @Override public void focusGained(FocusEvent e) { setOutline(combo, ACCENT); }
-            @Override public void focusLost(FocusEvent e) { setOutline(combo, BORDER); }
-        });
+        highlightOnFocus(combo);
         // Same height as a text field so rows line up.
         combo.setPreferredSize(new Dimension(combo.getPreferredSize().width, 38));
     }
@@ -403,7 +549,7 @@ final class Theme {
     }
 
     /** The colour actually showing behind a component (skipping transparent panels). */
-    static Color visibleBackground(Component c) {
+    private static Color visibleBackground(Component c) {
         while (c != null) {
             if (c instanceof RoundedPanel || c.isOpaque()) return c.getBackground();
             c = c.getParent();
@@ -424,14 +570,15 @@ final class Theme {
             return arrow;
         }
 
+        // The system UI paints a blue "selected" block behind the value in the closed box.
+        // These two overrides skip it so the combo looks like the text fields.
         @Override
         public void paintCurrentValueBackground(Graphics g, Rectangle bounds, boolean hasFocus) {
-            // The combo's own background is enough; no blue block behind the value.
         }
 
         @Override
         public void paintCurrentValue(Graphics g, Rectangle bounds, boolean hasFocus) {
-            super.paintCurrentValue(g, bounds, false); // no blue "selected" block in the closed box
+            super.paintCurrentValue(g, bounds, false);
         }
     }
 
@@ -453,7 +600,7 @@ final class Theme {
         }
 
         private int hintWidth() {
-            return getFontMetrics(SMALL.deriveFont(Font.BOLD)).stringWidth(hint) + 16;
+            return getFontMetrics(LABEL).stringWidth(hint) + 16;
         }
 
         @Override
@@ -471,8 +618,7 @@ final class Theme {
                 g2.drawString(placeholder, getInsets().left, (h - fm.getHeight()) / 2 + fm.getAscent());
             }
             if (hint != null) {
-                Font f = SMALL.deriveFont(Font.BOLD);
-                g2.setFont(f);
+                g2.setFont(LABEL);
                 FontMetrics fm = g2.getFontMetrics();
                 int w = hintWidth();
                 int bh = fm.getHeight() + 6;
@@ -514,7 +660,7 @@ final class Theme {
         return table;
     }
 
-    static JScrollPane tableScroll(JTable table) {
+    private static JScrollPane tableScroll(JTable table) {
         JScrollPane scroll = new JScrollPane(table);
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.getViewport().setBackground(CARD);
@@ -593,11 +739,6 @@ final class Theme {
             setOpaque(false);
         }
 
-        void setOutline(Color color) {
-            outline = color;
-            repaint();
-        }
-
         void setMaskColor(Color color) {
             mask = color;
             if (mask != null) setBorder(new EmptyBorder(1, 1, 1, 1));
@@ -654,7 +795,16 @@ final class Theme {
         }
     }
 
-    enum ButtonKind { PRIMARY, SECONDARY, SOFT, GHOST, LINK, TAB, PLAIN, CIRCLE, CURRENT }
+    enum ButtonKind {
+        PRIMARY,    // filled olive, cream text
+        SECONDARY,  // white with an outline
+        SOFT,       // cream, for the quick actions next to a primary button
+        LINK,       // text only
+        TAB,        // unselected tab on the sign-in window
+        PLAIN,      // no box until the pointer is over it (top bar)
+        CIRCLE,     // round icon button on the sidebar card
+        CURRENT     // the current page number in the pager
+    }
 
     /** A flat, rounded button that keeps its colours on every operating system. */
     static class FlatButton extends JButton {
@@ -686,9 +836,8 @@ final class Theme {
             kind = newKind;
             switch (kind) {
                 case PRIMARY:
-                case GHOST:
                 case CURRENT:
-                    setForeground(Color.WHITE);
+                    setForeground(ON_ACCENT);
                     break;
                 case LINK:
                     setForeground(ACCENT);
@@ -731,29 +880,26 @@ final class Theme {
             Color line = null;
             switch (kind) {
                 case PRIMARY:
-                    fill = !isEnabled() ? new Color(185, 180, 201)
+                    fill = !isEnabled() ? mix(ACCENT, CARD, 0.45)
                             : m.isPressed() ? ACCENT_PRESSED : m.isRollover() ? ACCENT_HOVER : ACCENT;
                     break;
                 case SECONDARY:
-                    fill = m.isPressed() ? new Color(0xE6, 0xE4, 0xF0) : m.isRollover() ? ACCENT_SOFT : CARD;
+                    fill = m.isPressed() ? mix(ACCENT, CARD, 0.2) : m.isRollover() ? ACCENT_SOFT : CARD;
                     line = BORDER;
                     break;
                 case SOFT:
-                    fill = m.isPressed() ? new Color(0xEF, 0xE6, 0xD9) : m.isRollover() ? new Color(0xF5, 0xEE, 0xE4) : SOFT_BUTTON;
+                    fill = m.isPressed() ? mix(ACCENT, SOFT_BUTTON, 0.16)
+                            : m.isRollover() ? mix(ACCENT, SOFT_BUTTON, 0.08) : SOFT_BUTTON;
                     line = SOFT_BUTTON_LINE;
                     break;
-                case GHOST: // on the dark sidebar
-                    fill = new Color(255, 255, 255, m.isRollover() ? 45 : 18);
-                    line = new Color(255, 255, 255, 70);
-                    break;
-                case PLAIN: // no box until the pointer is over it
-                    if (m.isRollover() || m.isPressed()) fill = m.isPressed() ? new Color(0xE9, 0xE7, 0xF0) : CHIP;
+                case PLAIN:
+                    if (m.isRollover() || m.isPressed()) fill = m.isPressed() ? CHIP_HOVER : CHIP;
                     break;
                 case CIRCLE:
-                    fill = m.isRollover() ? Color.WHITE : new Color(0xE6, 0xE5, 0xF7);
+                    fill = m.isRollover() ? mix(CREAM, Color.WHITE, 0.4) : CREAM;
                     break;
                 case CURRENT:
-                    fill = ACCENT_MID;
+                    fill = ACCENT;
                     break;
                 case TAB:
                     setForeground(m.isRollover() ? TEXT : MUTED);
@@ -773,8 +919,8 @@ final class Theme {
                 g2.setColor(line);
                 g2.drawRoundRect(0, 0, w, h, radius, radius);
             }
-            if (isFocusOwner() && kind != ButtonKind.GHOST && kind != ButtonKind.LINK && kind != ButtonKind.TAB) {
-                g2.setColor(new Color(ACCENT.getRed(), ACCENT.getGreen(), ACCENT.getBlue(), 120));
+            if (isFocusOwner() && kind != ButtonKind.LINK && kind != ButtonKind.TAB) {
+                g2.setColor(withAlpha(ACCENT, 120));
                 if (kind == ButtonKind.CIRCLE) g2.drawOval(2, 2, w - 4, h - 4);
                 else g2.drawRoundRect(2, 2, w - 4, h - 4, Math.max(4, radius - 2), Math.max(4, radius - 2));
             }
@@ -786,8 +932,8 @@ final class Theme {
                 Graphics2D g3 = (Graphics2D) g.create();
                 g3.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 if (trailing != null) {
-                    int right = getInsets().right - trailing.getIconWidth() - 8;
-                    trailing.paintIcon(this, g3, getWidth() - right - trailing.getIconWidth() - 4 - 4,
+                    // setTrailingIcon() widened the right inset to make room, so the icon starts there.
+                    trailing.paintIcon(this, g3, getWidth() - getInsets().right,
                             (getHeight() - trailing.getIconHeight()) / 2);
                 }
                 if (dot) {
@@ -842,7 +988,7 @@ final class Theme {
         }
     }
 
-    /** Colour for a progress fraction: lavender when fine, amber near the limit, red when over. */
+    /** Colour for a progress fraction: olive when fine, amber near the limit, red when over. */
     static Color progressColor(double fraction) {
         if (fraction >= 1) return RED;
         if (fraction >= 0.8) return AMBER;
@@ -880,7 +1026,7 @@ final class Theme {
     static final class Pill extends JLabel {
         Pill(String text, Color background, Color foreground) {
             super(text);
-            setFont(font(Font.PLAIN, 13));
+            setFont(BODY);
             setForeground(foreground);
             setBackground(background);
             setOpaque(false);
@@ -979,9 +1125,9 @@ final class Theme {
         }
     }
 
-    /** Moni's logo: a vintage cream peso coin. */
+    /** Moni's logo: a cream peso coin with an olive sign, the same in light and dark mode. */
     static Badge logo(int size) {
-        return new Badge("\u20B1", size, CREAM, INK);
+        return new Badge("\u20B1", size, CREAM, OLIVE);
     }
 
     /**
@@ -1010,13 +1156,9 @@ final class Theme {
             });
         }
 
-        /**
-         * BUG FIX: the text cursor sits at the end of the text, and Swing scrolls it into view,
-         * so any scrollable page containing WrapText opened scrolled to the bottom. This text is
-         * read-only, so it never needs to scroll itself into view.
-         */
+        // Without this, Swing scrolls the (hidden) text cursor into view, so a page with
+        // WrapText on it opens scrolled to the bottom. Read-only text never needs that.
         @Override public void scrollRectToVisible(Rectangle r) {
-            // intentionally empty
         }
 
         @Override public Dimension getPreferredSize() {
@@ -1085,7 +1227,7 @@ final class Theme {
     /** Scroll bar with a thin rounded thumb and no arrow buttons. */
     static final class ThinScrollBarUI extends BasicScrollBarUI {
         @Override protected void configureScrollBarColors() {
-            thumbColor = new Color(0x1F, 0x1D, 0x2B, 55);
+            thumbColor = withAlpha(TEXT, 55);
             trackColor = new Color(0, 0, 0, 0);
         }
 
@@ -1101,14 +1243,14 @@ final class Theme {
         }
 
         @Override protected void paintTrack(Graphics g, JComponent c, Rectangle r) {
-            // transparent track
+            // No track, only the thumb.
         }
 
         @Override protected void paintThumb(Graphics g, JComponent c, Rectangle r) {
             if (r.isEmpty() || !scrollbar.isEnabled()) return;
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setColor(isThumbRollover() ? new Color(0x1F, 0x1D, 0x2B, 90) : thumbColor);
+            g2.setColor(isThumbRollover() ? withAlpha(TEXT, 90) : thumbColor);
             boolean vertical = scrollbar.getOrientation() == JScrollBar.VERTICAL;
             int t = 6;
             if (vertical) g2.fillRoundRect(r.x + (r.width - t) / 2, r.y + 2, t, r.height - 4, t, t);
