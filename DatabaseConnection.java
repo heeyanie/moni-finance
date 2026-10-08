@@ -1,43 +1,54 @@
 package app;
 
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
-import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 
-/** Database connection plus an updated automatic schema migration. */
+/**
+ * Opens connections to the MySQL database. The first time a connection is opened it also
+ * creates any missing tables, so the app works on an empty moni_db database.
+ *
+ * The connection settings can be changed with the MONI_DB_URL, MONI_DB_USER and MONI_DB_PASS
+ * environment variables; otherwise the XAMPP defaults below are used.
+ */
 public final class DatabaseConnection {
 
-    private static final String DEFAULT_URL =
-            "jdbc:mysql://localhost:3306/moni_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Manila";
-    private static final String DEFAULT_USER = "root";
-    private static final String DEFAULT_PASSWORD = "";
+    // serverTimezone keeps DATE columns from shifting by a day when converted to Java dates.
+    private static final String URL = envOrDefault("MONI_DB_URL",
+            "jdbc:mysql://localhost:3306/moni_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Manila");
+    private static final String USER = envOrDefault("MONI_DB_USER", "root");
+    private static final String PASSWORD = envOrDefault("MONI_DB_PASS", "");
 
     private static boolean schemaReady = false;
 
     private DatabaseConnection() {}
 
+    /** Returns a new connection. The caller must close it (use try-with-resources). */
     public static synchronized Connection getConnection() throws SQLException {
-        String url = System.getenv("MONI_DB_URL") != null ? System.getenv("MONI_DB_URL") : DEFAULT_URL;
-        String user = System.getenv("MONI_DB_USER") != null ? System.getenv("MONI_DB_USER") : DEFAULT_USER;
-        String pass = System.getenv("MONI_DB_PASS") != null ? System.getenv("MONI_DB_PASS") : DEFAULT_PASSWORD;
-
-        Connection c = DriverManager.getConnection(url, user, pass);
+        Connection connection = DriverManager.getConnection(URL, USER, PASSWORD);
         if (!schemaReady) {
-            ensureSchema(c);
-            schemaReady = true;
+            try {
+                createTables(connection);
+                addMissingColumns(connection);
+                schemaReady = true;
+            } catch (SQLException e) {
+                connection.close();
+                throw e;
+            }
         }
-        return c;
+        return connection;
     }
 
-    private static void ensureSchema(Connection c) throws SQLException {
-        try (Statement s = c.createStatement()) {
-            s.executeUpdate("CREATE DATABASE IF NOT EXISTS moni_db");
-        } catch (SQLException ignored) {}
+    private static String envOrDefault(String name, String defaultValue) {
+        String value = System.getenv(name);
+        return value != null ? value : defaultValue;
+    }
 
-        try (Statement s = c.createStatement()) {
+    private static void createTables(Connection connection) throws SQLException {
+        try (Statement s = connection.createStatement()) {
             s.executeUpdate("CREATE TABLE IF NOT EXISTS users ("
                     + "user_id INT AUTO_INCREMENT PRIMARY KEY, "
                     + "student_number VARCHAR(50) NOT NULL UNIQUE, "
@@ -70,11 +81,13 @@ public final class DatabaseConnection {
                     + "setup_completed BOOLEAN NOT NULL DEFAULT FALSE, "
                     + "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE)");
 
+            // One budget per category per user, same as in moni_db.sql.
             s.executeUpdate("CREATE TABLE IF NOT EXISTS budgets ("
                     + "budget_id INT AUTO_INCREMENT PRIMARY KEY, "
                     + "user_id INT NOT NULL, "
                     + "category VARCHAR(100) NOT NULL, "
                     + "budget_limit DECIMAL(12,2) NOT NULL DEFAULT 0.00, "
+                    + "UNIQUE (user_id, category), "
                     + "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE)");
 
             s.executeUpdate("CREATE TABLE IF NOT EXISTS transactions ("
@@ -87,22 +100,26 @@ public final class DatabaseConnection {
                     + "amount DECIMAL(12,2) NOT NULL DEFAULT 0.00, "
                     + "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE)");
         }
-
-        addColumnIfMissing(c, "user_settings", "allowance_amount", "DECIMAL(12,2) NOT NULL DEFAULT 0.00");
-        addColumnIfMissing(c, "user_settings", "allowance_frequency", "VARCHAR(30) NOT NULL DEFAULT 'Daily'");
-        addColumnIfMissing(c, "user_settings", "daily_allowance", "DECIMAL(12,2) NOT NULL DEFAULT 0.00");
     }
 
-    private static void addColumnIfMissing(Connection c, String table, String column, String definition)
-            throws SQLException {
-        DatabaseMetaData meta = c.getMetaData();
-        try (ResultSet rs = meta.getColumns(c.getCatalog(), null, table, column)) {
-            if (rs.next()) return;
-        }
+    /**
+     * The allowance columns were added after the first version of user_settings, so older
+     * databases that already have the table don't get them from CREATE TABLE IF NOT EXISTS.
+     */
+    private static void addMissingColumns(Connection connection) throws SQLException {
+        addColumnIfMissing(connection, "user_settings", "allowance_amount", "DECIMAL(12,2) NOT NULL DEFAULT 0.00");
+        addColumnIfMissing(connection, "user_settings", "allowance_frequency", "VARCHAR(30) NOT NULL DEFAULT 'Daily'");
+        addColumnIfMissing(connection, "user_settings", "daily_allowance", "DECIMAL(12,2) NOT NULL DEFAULT 0.00");
+    }
 
-        String sql = "ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition;
-        try (Statement s = c.createStatement()) {
-            s.executeUpdate(sql);
+    private static void addColumnIfMissing(Connection connection, String table, String column, String definition)
+            throws SQLException {
+        DatabaseMetaData meta = connection.getMetaData();
+        try (ResultSet columns = meta.getColumns(connection.getCatalog(), null, table, column)) {
+            if (columns.next()) return;
+        }
+        try (Statement s = connection.createStatement()) {
+            s.executeUpdate("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
         }
     }
 }
